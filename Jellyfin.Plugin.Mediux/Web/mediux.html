@@ -1,0 +1,143 @@
+<div id="MediuxConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-controller="__plugin/mediuxjs">
+	<div data-role="content">
+		<div class="content-primary">
+			<style>
+				#MediuxConfigPage .mediux-info-banner {
+					margin-bottom: 1.5em;
+				}
+
+				#MediuxConfigPage .mediux-author-list {
+					margin: 0.5em 0 0.75em;
+				}
+
+				#MediuxConfigPage .mediux-author-row {
+					display: flex;
+					align-items: center;
+					gap: 0.25em;
+					cursor: grab;
+				}
+
+				#MediuxConfigPage .mediux-author-row.mediux-dragging {
+					opacity: 0.5;
+				}
+
+				#MediuxConfigPage .mediux-author-row .drag_handle {
+					flex: 0 0 auto;
+					opacity: 0.7;
+					user-select: none;
+				}
+
+				#MediuxConfigPage .mediux-author-row .listItemBody {
+					flex: 1 1 auto;
+					min-width: 0;
+				}
+
+				#MediuxConfigPage .mediux-author-row .txtAuthorName {
+					width: 100%;
+					background: transparent;
+					border: none;
+					box-shadow: none;
+					outline: none;
+					color: inherit;
+					font: inherit;
+					padding: 0.35em 0;
+				}
+
+				#MediuxConfigPage .mediux-author-row .txtAuthorName::placeholder {
+					opacity: 0.55;
+				}
+
+				#MediuxConfigPage .mediux-author-actions {
+					margin-bottom: 1.25em;
+				}
+			</style>
+
+			<form id="MediuxConfigForm">
+				<div class="sectionTitleContainer flex align-items-center">
+					<h2 class="sectionTitle">MediUX</h2>
+				</div>
+
+				<div class="infoBanner mediux-info-banner">
+					MediUX API access is currently in beta. Join the <a href="https://discord.gg/YAKzwKPwyw" target="_blank">Discord</a> to
+					get an API key.
+				</div>
+
+				<div class="inputContainer">
+					<label class="inputLabel inputLabelUnfocused" for="txtApiKey">API Key</label>
+					<input id="txtApiKey" type="password" is="emby-input" />
+				</div>
+
+				<div class="verticalSection">
+					<h3 class="sectionTitle">Prioritized Authors</h3>
+					<div class="fieldDescription">
+						Artwork sets from these authors will be prioritized and shown first when searching for images. Sets from these
+						authors are also prioritized when automatically downloading artwork via a library scan or when manually refreshing
+						an item.
+					</div>
+					<div id="authorPriorityList" class="mediux-author-list paperList"></div>
+					<div class="mediux-author-actions">
+						<button id="btnAddAuthor" is="emby-button" type="button" class="raised block">
+							<span>Add Author</span>
+						</button>
+					</div>
+				</div>
+
+				<div class="checkboxContainer checkboxContainer-withDescription">
+					<label class="emby-checkbox-label">
+						<input id="chkOnlyPrioritizedAuthors" type="checkbox" is="emby-checkbox" />
+						<span>Only download images from Prioritized Authors</span>
+					</label>
+					<div class="fieldDescription checkboxFieldDescription">
+						When enabled, only artwork from authors on the Prioritized Authors list is shown or downloaded.
+					</div>
+				</div>
+
+				<div class="verticalSection">
+					<h3 class="sectionTitle">Excluded Authors</h3>
+					<div class="fieldDescription">
+						Artwork sets from these authors will not be downloaded automatically, and will not appear as a result when searching for artwork.
+					</div>
+					<div id="authorExcludedList" class="mediux-author-list paperList"></div>
+					<div class="mediux-author-actions">
+						<button id="btnAddExcludedAuthor" is="emby-button" type="button" class="raised block">
+							<span>Add Author</span>
+						</button>
+					</div>
+				</div>
+
+				<div class="selectContainer">
+					<label class="inputLabel" for="selectDownloadQuality">Download Quality</label>
+					<select is="emby-select" id="selectDownloadQuality">
+						<option value="optimized">Optimized</option>
+						<option value="original">Original</option>
+					</select>
+					<div class="fieldDescription">Optimized uses compressed JPEG assets; original downloads full-size files.</div>
+				</div>
+
+				<div class="inputContainer">
+					<label class="inputLabel inputLabelUnfocused" for="txtSetDownloadConcurrency">Max number of simultaneous downloads per set</label>
+					<input id="txtSetDownloadConcurrency" type="number" is="emby-input" min="1" max="16" step="1" />
+					<div class="fieldDescription">
+						How many images from one set download in parallel. Sets themselves still download one after another.
+					</div>
+				</div>
+
+				<div class="checkboxContainer checkboxContainer-withDescription">
+					<label class="emby-checkbox-label">
+						<input id="chkMapAlbumArtToBox" type="checkbox" is="emby-checkbox" />
+						<span>Map album art to Box</span>
+					</label>
+					<div class="fieldDescription checkboxFieldDescription">
+						Download &quot;Album Art&quot; as &quot;Box&quot; image type.
+					</div>
+				</div>
+
+				<div>
+					<button id="btnSave" is="emby-button" type="submit" class="raised button-submit block">
+						<span>${Save}</span>
+					</button>
+				</div>
+			</form>
+		</div>
+	</div>
+</div>

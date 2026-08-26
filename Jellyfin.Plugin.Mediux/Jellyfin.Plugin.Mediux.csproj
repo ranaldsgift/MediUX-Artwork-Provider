@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
+    <RootNamespace>Jellyfin.Plugin.Mediux</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <PackageReference Include="Jellyfin.Controller" Version="10.10.7" />
+    <PackageReference Include="Jellyfin.Model" Version="10.10.7" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.1">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
+    <PackageReference Include="Jellyfin.Controller" Version="10.11.0" />
+    <PackageReference Include="Jellyfin.Model" Version="10.11.0" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.11">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="Web\mediux.html" />
+    <None Remove="Web\mediux.js" />
+    <None Remove="Web\setbrowser.js" />
+    <EmbeddedResource Include="Web\mediux.html" />
+    <EmbeddedResource Include="Web\mediux.js" />
+    <EmbeddedResource Include="Web\setbrowser.js" />
+  </ItemGroup>
+
+  <!-- Package install folders under dist/ after Release builds -->
+  <Target Name="PackageDist" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+    <PropertyGroup>
+      <_DistDir Condition="'$(TargetFramework)' == 'net8.0'">$(MSBuildThisFileDirectory)..\dist\10.10.7\</_DistDir>
+      <_DistDir Condition="'$(TargetFramework)' == 'net9.0'">$(MSBuildThisFileDirectory)..\dist\10.11\</_DistDir>
+      <_MetaSource Condition="'$(TargetFramework)' == 'net8.0'">$(MSBuildThisFileDirectory)..\meta.10.10.7.json</_MetaSource>
+      <_MetaSource Condition="'$(TargetFramework)' == 'net9.0'">$(MSBuildThisFileDirectory)..\meta.10.11.json</_MetaSource>
+    </PropertyGroup>
+    <MakeDir Directories="$(_DistDir)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(_DistDir)" />
+    <Copy SourceFiles="$(_MetaSource)" DestinationFiles="$(_DistDir)meta.json" />
+  </Target>
+
+</Project>

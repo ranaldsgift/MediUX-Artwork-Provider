@@ -1,0 +1,28 @@
+[
+{
+    "category":  "Metadata",
+    "guid":  "c8e4f2a1-9b3d-4e6f-a1c2-7d8e9f0a1b2c",
+    "name":  "MediUX",
+    "description":  "Artwork provider for MediUX fanart sets.",
+    "owner":  "ranaldsgift",
+    "overview":  "Scrape poster images from MediUX",
+    "versions":  [
+                     {
+                         "version":  "1.0.0.0",
+                         "changelog":  "Initial release: Jellyfin 10.10.7 (net8) and 10.11.x (net9), Fanart Sets browser, sticky set bindings, download queue toast.",
+                         "targetAbi":  "10.10.7.0",
+                         "sourceUrl":  "https://github.com/ranaldsgift/MediUX-Artwork-Provider/releases/download/v1.0.0/Jellyfin.Plugin.Mediux_10.10.7_1.0.0.0.zip",
+                         "checksum":  "EBC6E987477053540186963745C9AC63",
+                         "timestamp":  "2026-08-26T03:37:15Z"
+                     },
+                     {
+                         "version":  "1.0.0.0",
+                         "changelog":  "Initial release: Jellyfin 10.10.7 (net8) and 10.11.x (net9), Fanart Sets browser, sticky set bindings, download queue toast.",
+                         "targetAbi":  "10.11.5.0",
+                         "sourceUrl":  "https://github.com/ranaldsgift/MediUX-Artwork-Provider/releases/download/v1.0.0/Jellyfin.Plugin.Mediux_10.11_1.0.0.0.zip",
+                         "checksum":  "466E919E48B74E70F72207303AB28845",
+                         "timestamp":  "2026-08-26T03:37:15Z"
+                     }
+                 ]
+}
+]
