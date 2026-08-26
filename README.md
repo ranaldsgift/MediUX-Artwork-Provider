@@ -1,12 +1,24 @@
 # MediUX Artwork Provider Plugin
 
-This is a Jellyfin artwork provider plugin for fanart sets from MediUX(https://mediux.pro/).
+This is a Jellyfin artwork provider plugin for fanart sets from [MediUX](https://mediux.pro/).
 
 The plugin will automatically download fanart sets from MediUX based on your prioritized author list and your excluded author list. It will prioritize sets from authors at the top of your prioritized list while automatically excluding any sets from authors on your excluded list. If there are no sets from your prioritized authors for a given item, the plugin will prefer sets with the highest completeness and will prefer to download Season Posters and Titlecards from sets with the highest number of these items available.
 
 This plugin also provides an interface to browse fanart sets from within the Jellyfin UI when using the native "Edit Images" functionality.
 
 The plugin will remember which set has been selected (either automatically or manually) for each image type on a per item basis and will always prefer to download corresponding image types from the same set when automatically downloading images.
+
+## Table of Contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Manual Installation](#manual-installation)
+- [Build](#build)
+- [How set selection works](#how-set-selection-works)
+- [Acknowledgments](#acknowledgments)
+- [AI Disclaimer](#ai-disclaimer)
+- [License](#licence)
 
 ## Features
 
@@ -70,6 +82,14 @@ When Jellyfin refreshes images for an item (or scans a new item without art):
 5. **Alternatives** — other MediUX images for those slots are also listed in the image picker after preferred ones.
 
 Needed slots are based on what exists in your library (seasons/episodes present), so show completeness includes title cards for episodes you actually have.
+
+## Acknowledgments
+
+This plugin is inspired by the [Jellyfin Fanart.TV plugin](https://github.com/jellyfin/jellyfin-plugin-fanart). This was used as the foundation of this plugin, so a big thank you to the authors and [contributors](https://github.com/jellyfin/jellyfin-plugin-fanart/graphs/contributors) to that project.
+
+## AI Disclaimer
+
+This project has been developed with the assistance of AI coding agents. I have reviewed all of the code and tested all of the functionality "thoroughly". If you are concerned about lack of support, please see my other long term ongoing community projects to inspire your confidence.
 
 ## Licence
 
