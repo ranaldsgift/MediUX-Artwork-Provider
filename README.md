@@ -44,7 +44,7 @@ The plugin will remember which set has been selected (either automatically or ma
 1. In Jellyfin, go to **Dashboard → Plugins → Manage Repositories (top right corner)**
 2. Click **➕** and add the repository:
 
-   `https://raw.githubusercontent.com/ranaldsgift/MediUX-Artwork-Provider/main/manifest.json`
+   `https://raw.githubusercontent.com/ranaldsgift/MediUX-Artwork-Provider/master/manifest.json`
 
 3. Go to the **Catalog** tab, find **MediUX**, and click **Install**
 4. Restart your Jellyfin server
