@@ -12,16 +12,16 @@
                          "changelog":  "Initial release: Jellyfin 10.10.7 (net8) and 10.11.x (net9), Fanart Sets browser, sticky set bindings, download queue toast.",
                          "targetAbi":  "10.10.7.0",
                          "sourceUrl":  "https://github.com/ranaldsgift/MediUX-Artwork-Provider/releases/download/v1.0.0/Jellyfin.Plugin.Mediux_10.10.7_1.0.0.0.zip",
-                         "checksum":  "EBC6E987477053540186963745C9AC63",
-                         "timestamp":  "2026-08-26T03:37:15Z"
+                         "checksum":  "EA3DD7AEE8E528E7608235DBE7B2F514",
+                         "timestamp":  "2026-08-26T04:42:22Z"
                      },
                      {
                          "version":  "1.0.0.0",
                          "changelog":  "Initial release: Jellyfin 10.10.7 (net8) and 10.11.x (net9), Fanart Sets browser, sticky set bindings, download queue toast.",
                          "targetAbi":  "10.11.5.0",
                          "sourceUrl":  "https://github.com/ranaldsgift/MediUX-Artwork-Provider/releases/download/v1.0.0/Jellyfin.Plugin.Mediux_10.11_1.0.0.0.zip",
-                         "checksum":  "466E919E48B74E70F72207303AB28845",
-                         "timestamp":  "2026-08-26T03:37:15Z"
+                         "checksum":  "75FFF2E848950FE933A11A26D6E2519C",
+                         "timestamp":  "2026-08-26T04:42:22Z"
                      }
                  ]
 }
