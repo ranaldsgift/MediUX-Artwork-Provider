@@ -1,7 +1,9 @@
+using Jellyfin.Plugin.Mediux.Configuration;
+
 namespace Jellyfin.Plugin.Mediux.Selection;
 
 /// <summary>
-/// Selects MediUX sets using creator priority, completeness, and popularity.
+/// Selects MediUX sets using creator priority, need-coverage ranking, and sticky bindings.
 /// </summary>
 public static class SetSelector
 {
@@ -46,17 +48,14 @@ public static class SetSelector
     /// <summary>
     /// Selects preferred images for the given needs from available sets,
     /// then includes all other matching assets as alternatives.
+    /// Binding updates are wanted sets only — gap-fill does not change bindings.
     /// </summary>
-    /// <param name="sets">Available sets (already author-filtered).</param>
-    /// <param name="needs">Needed image slots.</param>
-    /// <param name="priorityCreators">Ordered creator usernames (highest first).</param>
-    /// <param name="bindings">Optional sticky set bindings by category.</param>
-    /// <returns>Selection result.</returns>
     public static SelectionResult Select(
         IReadOnlyList<MediuxSet> sets,
         IReadOnlyList<ImageSlot> needs,
         IReadOnlyList<string> priorityCreators,
-        SetBindings? bindings = null)
+        SetBindings? bindings = null,
+        PluginConfiguration? config = null)
     {
         if (sets.Count == 0 || needs.Count == 0)
         {
@@ -65,82 +64,50 @@ public static class SetSelector
 
         var setsById = sets.ToDictionary(s => s.Id, StringComparer.OrdinalIgnoreCase);
         var filled = new Dictionary<ImageSlot, SelectedImage>();
-        var usedSetIds = new HashSet<string>(StringComparer.Ordinal);
-        var updatedBindings = new Dictionary<SetBindingKind, string>();
 
-        if (bindings is not null)
+        var ranked = SetRanker.RankSets(sets, needs, priorityCreators);
+        var wantedByKind = SetRanker.AssignWantedSets(
+            ranked,
+            needs,
+            bindings,
+            setsById);
+
+        foreach (var (kind, set) in wantedByKind)
         {
-            ApplyStickyBindings(setsById, needs, bindings, filled, usedSetIds, updatedBindings);
+            var kindNeeds = needs
+                .Where(n => GetBindingKind(n) == kind && !filled.ContainsKey(n))
+                .ToList();
+            AssignFromSet(set, kindNeeds, filled);
         }
 
-        var remainingNeeds = needs.Where(n => !filled.ContainsKey(n)).ToList();
-
-        if (remainingNeeds.Count > 0 && priorityCreators.Count > 0)
+        foreach (var need in needs.Where(n => !filled.ContainsKey(n)))
         {
-            foreach (var creator in priorityCreators)
+            var kind = GetBindingKind(need);
+            if (kind is null)
             {
-                var creatorSets = sets
-                    .Where(s => string.Equals(s.Username, creator, StringComparison.OrdinalIgnoreCase))
-                    .ToList();
+                continue;
+            }
 
-                if (creatorSets.Count == 0)
-                {
-                    continue;
-                }
-
-                var best = OrderByCompleteness(creatorSets, remainingNeeds).First();
-                if (Score(best, remainingNeeds) <= 0)
-                {
-                    continue;
-                }
-
-                AssignFromSet(best, remainingNeeds, filled);
-                usedSetIds.Add(best.Id);
-                RecordBindingsFromAssignment(best, remainingNeeds, filled, updatedBindings);
-                break;
+            var binding = bindings?.Get(kind.Value);
+            var picked = PickImageForSlot(sets, need, binding, priorityCreators);
+            if (picked is not null)
+            {
+                filled[need] = picked;
             }
         }
 
-        remainingNeeds = needs.Where(n => !filled.ContainsKey(n)).ToList();
-
-        if (remainingNeeds.Count > 0 && filled.Count == 0)
+        var bindingUpdates = new Dictionary<SetBindingKind, ImageTypeBinding>();
+        foreach (var (kind, set) in wantedByKind)
         {
-            var best = OrderByCompleteness(sets, remainingNeeds).FirstOrDefault();
-            if (best is not null && Score(best, remainingNeeds) > 0)
+            var kindNeeds = needs.Where(n => GetBindingKind(n) == kind).ToList();
+            var existing = bindings?.Get(kind);
+            bindingUpdates[kind] = new ImageTypeBinding
             {
-                AssignFromSet(best, remainingNeeds, filled);
-                usedSetIds.Add(best.Id);
-                RecordBindingsFromAssignment(best, remainingNeeds, filled, updatedBindings);
-            }
-        }
-
-        remainingNeeds = needs.Where(n => !filled.ContainsKey(n)).ToList();
-
-        var guard = 0;
-        while (remainingNeeds.Count > 0 && guard++ < sets.Count + 2)
-        {
-            var candidate = OrderByCompleteness(sets.Where(s => !usedSetIds.Contains(s.Id)), remainingNeeds)
-                .FirstOrDefault(s => Score(s, remainingNeeds) > 0);
-
-            if (candidate is null)
-            {
-                candidate = OrderByCompleteness(sets, remainingNeeds).FirstOrDefault(s => Score(s, remainingNeeds) > 0);
-                if (candidate is null)
-                {
-                    break;
-                }
-            }
-
-            var before = filled.Count;
-            AssignFromSet(candidate, remainingNeeds, filled);
-            usedSetIds.Add(candidate.Id);
-            RecordBindingsFromAssignment(candidate, remainingNeeds, filled, updatedBindings);
-            if (filled.Count == before)
-            {
-                break;
-            }
-
-            remainingNeeds = needs.Where(n => !filled.ContainsKey(n)).ToList();
+                Set = set.Id,
+                Author = set.Username,
+                Locked = existing?.Locked == true,
+                Missing = SetRanker.ComputeMissing(set, kind, kindNeeds)
+            };
         }
 
         var preferred = OrderPreferred(filled.Values.ToList(), needs);
@@ -167,7 +134,7 @@ public static class SetSelector
         {
             Preferred = preferred,
             Alternatives = alternatives,
-            BindingUpdates = updatedBindings
+            BindingUpdates = bindingUpdates
         };
     }
 
@@ -229,6 +196,37 @@ public static class SetSelector
     }
 
     /// <summary>
+    /// Picks an image for a single slot: bound set first, then highest-ranked set with the slot.
+    /// </summary>
+    public static SelectedImage? PickImageForSlot(
+        IReadOnlyList<MediuxSet> sets,
+        ImageSlot slot,
+        ImageTypeBinding? binding,
+        IReadOnlyList<string> priorityCreators)
+    {
+        if (sets.Count == 0)
+        {
+            return null;
+        }
+
+        if (binding?.Set is not null)
+        {
+            var boundSet = sets.FirstOrDefault(s =>
+                string.Equals(s.Id, binding.Set, StringComparison.OrdinalIgnoreCase));
+            if (boundSet is not null)
+            {
+                var boundMatch = FindImageInSet(boundSet, slot);
+                if (boundMatch is not null)
+                {
+                    return ToSelectedImage(boundMatch, boundSet);
+                }
+            }
+        }
+
+        return PickRankedForSlot(sets, slot, priorityCreators);
+    }
+
+    /// <summary>
     /// Maps an image slot to a sticky binding category.
     /// </summary>
     public static SetBindingKind? GetBindingKind(ImageSlot slot)
@@ -244,83 +242,34 @@ public static class SetSelector
             _ => null
         };
 
-    private static void ApplyStickyBindings(
-        IReadOnlyDictionary<string, MediuxSet> setsById,
-        IReadOnlyList<ImageSlot> needs,
-        SetBindings bindings,
-        IDictionary<ImageSlot, SelectedImage> filled,
-        HashSet<string> usedSetIds,
-        IDictionary<SetBindingKind, string> updatedBindings)
+    private static SelectedImage? PickRankedForSlot(
+        IReadOnlyList<MediuxSet> sets,
+        ImageSlot slot,
+        IReadOnlyList<string> priorityCreators)
     {
-        foreach (var need in needs)
+        var ranked = SetRanker.RankSets(sets, [slot], priorityCreators);
+        foreach (var set in ranked)
         {
-            if (filled.ContainsKey(need))
+            var match = FindImageInSet(set, slot);
+            if (match is not null)
             {
-                continue;
+                return ToSelectedImage(match, set);
             }
-
-            var kind = GetBindingKind(need);
-            if (kind is null)
-            {
-                continue;
-            }
-
-            var setId = bindings.Get(kind.Value);
-            if (string.IsNullOrWhiteSpace(setId) || !setsById.TryGetValue(setId, out var set))
-            {
-                continue;
-            }
-
-            var match = set.Images.FirstOrDefault(i => i.Slot.Equals(need));
-            if (match is null)
-            {
-                continue;
-            }
-
-            filled[need] = new SelectedImage
-            {
-                Image = match,
-                SourceSet = set,
-                IsPreferred = true
-            };
-            usedSetIds.Add(set.Id);
-            updatedBindings[kind.Value] = set.Id;
         }
+
+        return null;
     }
 
-    private static void RecordBindingsFromAssignment(
-        MediuxSet set,
-        IReadOnlyList<ImageSlot> attemptedNeeds,
-        IDictionary<ImageSlot, SelectedImage> filled,
-        IDictionary<SetBindingKind, string> updatedBindings)
-    {
-        foreach (var need in attemptedNeeds)
+    private static MediuxImage? FindImageInSet(MediuxSet set, ImageSlot slot)
+        => set.Images.FirstOrDefault(i => i.Slot.Equals(slot));
+
+    private static SelectedImage ToSelectedImage(MediuxImage image, MediuxSet sourceSet)
+        => new()
         {
-            if (!filled.TryGetValue(need, out var selected) || selected.SourceSet.Id != set.Id)
-            {
-                continue;
-            }
-
-            var kind = GetBindingKind(need);
-            if (kind is null || updatedBindings.ContainsKey(kind.Value))
-            {
-                continue;
-            }
-
-            updatedBindings[kind.Value] = set.Id;
-        }
-    }
-
-    private static IOrderedEnumerable<MediuxSet> OrderByCompleteness(
-        IEnumerable<MediuxSet> sets,
-        IReadOnlyList<ImageSlot> needs)
-    {
-        return sets
-            .OrderByDescending(s => Score(s, needs))
-            .ThenByDescending(s => s.Images.Count)
-            .ThenByDescending(s => s.EffectivePopularity)
-            .ThenByDescending(s => s.DateUpdated);
-    }
+            Image = image,
+            SourceSet = sourceSet,
+            IsPreferred = true
+        };
 
     private static void AssignFromSet(
         MediuxSet set,

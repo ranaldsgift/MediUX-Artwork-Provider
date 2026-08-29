@@ -1,5 +1,5 @@
-using System.Collections.Concurrent;
 using Jellyfin.Data.Enums;
+using Jellyfin.Plugin.Mediux.Configuration;
 using Jellyfin.Plugin.Mediux.Selection;
 using Jellyfin.Plugin.Mediux.Services;
 using MediaBrowser.Controller.Entities;
@@ -20,8 +20,6 @@ public class MediuxArtworkService
     private readonly ILibraryManager _libraryManager;
     private readonly MediuxSetBindingStore _bindingStore;
     private readonly ILogger<MediuxArtworkService> _logger;
-    private readonly ConcurrentDictionary<string, DownloadBindingHint> _downloadBindingHints =
-        new(StringComparer.Ordinal);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="MediuxArtworkService"/> class.
@@ -82,7 +80,7 @@ public class MediuxArtworkService
             needs.Add(new ImageSlot(ImageSlotKind.AlbumArt));
         }
 
-        var selection = SelectWithBindings(item, sets, needs);
+        var selection = SelectAndPersistBindings(item, sets, needs);
         var result = MapToRemoteImages(
             selection,
             includeKinds: null,
@@ -125,7 +123,7 @@ public class MediuxArtworkService
 
         var needs = BuildShowNeeds(series);
         var config = Plugin.Instance!.Configuration;
-        var selection = SelectWithBindings(series, sets, needs);
+        var selection = SelectAndPersistBindings(series, sets, needs);
 
         var includeKinds = new HashSet<ImageSlotKind> { ImageSlotKind.Primary, ImageSlotKind.Backdrop, ImageSlotKind.Logo };
         if (config.MapAlbumArtToBox)
@@ -175,14 +173,23 @@ public class MediuxArtworkService
             return [];
         }
 
-        var needs = BuildShowNeeds(series);
-        var selection = SelectWithBindings(series, sets, needs);
-        var result = MapToRemoteImages(
-            selection,
-            includeKinds: [ImageSlotKind.SeasonPrimary],
-            seasonFilter: season.IndexNumber,
-            episodeFilter: null,
-            providerKey: MediuxSetBindingStore.GetProviderKey(series));
+        var providerKey = MediuxSetBindingStore.GetProviderKey(series);
+        var bindings = providerKey is null ? null : _bindingStore.Get(providerKey);
+        var bindingKind = season.IndexNumber == 0
+            ? SetBindingKind.SpecialsPoster
+            : SetBindingKind.SeasonPosters;
+        var binding = bindings?.Get(bindingKind);
+        var slot = new ImageSlot(ImageSlotKind.SeasonPrimary, season.IndexNumber);
+        var config = Plugin.Instance!.Configuration;
+        var picked = SetSelector.PickImageForSlot(sets, slot, binding, config.GetPriorityCreatorList());
+        LogPickedSlotSource(
+            picked,
+            series.Name,
+            ImageSlotKind.SeasonPrimary,
+            binding?.Set,
+            season.IndexNumber,
+            null);
+        var result = picked is null ? [] : new List<RemoteImageInfo> { MapPickedImageToRemote(picked) };
         _logger.LogDebug("MediUX: Season S{SeasonNum} of {Name}: returning {Count} images", season.IndexNumber, series.Name, result.Count);
         return result;
     }
@@ -218,33 +225,78 @@ public class MediuxArtworkService
             return [];
         }
 
-        var needs = BuildShowNeeds(series);
-        var selection = SelectWithBindings(series, sets, needs);
-        var result = MapToRemoteImages(
-            selection,
-            includeKinds: [ImageSlotKind.EpisodeTitleCard],
-            seasonFilter: episode.ParentIndexNumber,
-            episodeFilter: episode.IndexNumber,
-            providerKey: MediuxSetBindingStore.GetProviderKey(series));
+        var providerKey = MediuxSetBindingStore.GetProviderKey(series);
+        var bindings = providerKey is null ? null : _bindingStore.Get(providerKey);
+        var binding = bindings?.Titlecards;
+        var slot = new ImageSlot(ImageSlotKind.EpisodeTitleCard, episode.ParentIndexNumber, episode.IndexNumber);
+        var config = Plugin.Instance!.Configuration;
+        var picked = SetSelector.PickImageForSlot(sets, slot, binding, config.GetPriorityCreatorList());
+        LogPickedSlotSource(
+            picked,
+            series.Name,
+            ImageSlotKind.EpisodeTitleCard,
+            binding?.Set,
+            episode.ParentIndexNumber,
+            episode.IndexNumber);
+        var result = picked is null ? [] : new List<RemoteImageInfo> { MapPickedImageToRemote(picked) };
         _logger.LogDebug("MediUX: Episode S{S}E{E} of {Name}: returning {Count} images", episode.ParentIndexNumber, episode.IndexNumber, series.Name, result.Count);
         return result;
     }
 
     /// <summary>
-    /// Downloads an image response and persists sticky bindings when this URL was offered via GetImages.
+    /// Downloads an image response.
     /// </summary>
     public async Task<HttpResponseMessage> GetImageResponseAsync(string url, CancellationToken cancellationToken)
     {
-        ApplyDownloadBindingHint(url);
         return await _apiClient.GetImageResponseAsync(url, cancellationToken).ConfigureAwait(false);
     }
 
-    private SelectionResult SelectWithBindings(BaseItem item, IReadOnlyList<MediuxSet> sets, IReadOnlyList<ImageSlot> needs)
+    /// <summary>
+    /// Selects preferred images for the given needs (used by the upgrade task).
+    /// </summary>
+    public SelectionResult SelectForItem(BaseItem item, IReadOnlyList<MediuxSet> sets, IReadOnlyList<ImageSlot> needs)
+        => SelectAndPersistBindings(item, sets, needs);
+
+    /// <summary>
+    /// Builds show image needs for seasons/episodes present in the library.
+    /// </summary>
+    public List<ImageSlot> BuildShowNeedsPublic(Series series)
+        => BuildShowNeeds(series);
+
+    /// <summary>
+    /// Applies author filters from plugin configuration.
+    /// </summary>
+    public IReadOnlyList<MediuxSet> FilterSets(IReadOnlyList<MediuxSet> sets)
+        => ApplyAuthorFilters(sets);
+
+    private SelectionResult SelectAndPersistBindings(
+        BaseItem item,
+        IReadOnlyList<MediuxSet> sets,
+        IReadOnlyList<ImageSlot> needs)
+    {
+        var selection = SelectImages(item, sets, needs);
+        TryPersistBindings(item, selection);
+        return selection;
+    }
+
+    private SelectionResult SelectImages(
+        BaseItem item,
+        IReadOnlyList<MediuxSet> sets,
+        IReadOnlyList<ImageSlot> needs)
     {
         var config = Plugin.Instance!.Configuration;
         var providerKey = MediuxSetBindingStore.GetProviderKey(item);
         var bindings = providerKey is null ? null : _bindingStore.Get(providerKey);
-        var selection = SetSelector.Select(sets, needs, config.GetPriorityCreatorList(), bindings);
+        var selection = SetSelector.Select(sets, needs, config.GetPriorityCreatorList(), bindings, config);
+
+        if (selection.BindingUpdates.Count > 0)
+        {
+            var wantedSummary = string.Join(
+                ", ",
+                selection.BindingUpdates.Select(kv =>
+                    $"{kv.Key}={kv.Value.Set}({kv.Value.Author ?? "?"})"));
+            _logger.LogDebug("MediUX: {Name} wanted sets: {WantedSets}", item.Name, wantedSummary);
+        }
 
         _logger.LogDebug(
             "MediUX: {Name}: {PreferredCount} preferred, {AltCount} alternative images selected",
@@ -255,22 +307,24 @@ public class MediuxArtworkService
         return selection;
     }
 
-    private void ApplyDownloadBindingHint(string url)
+    private void TryPersistBindings(BaseItem item, SelectionResult selection)
     {
-        if (string.IsNullOrWhiteSpace(url) || !_downloadBindingHints.TryRemove(url, out var hint))
+        var config = Plugin.Instance!.Configuration;
+        var providerKey = MediuxSetBindingStore.GetProviderKey(item);
+        if (providerKey is null || selection.BindingUpdates.Count == 0)
         {
             return;
         }
 
-        _bindingStore.Merge(
-            hint.ProviderKey,
-            new Dictionary<SetBindingKind, string> { [hint.Kind] = hint.SetId });
+        if (!_bindingStore.MergeAutomatic(providerKey, selection.BindingUpdates, config))
+        {
+            return;
+        }
 
         _logger.LogDebug(
-            "MediUX: Persisted binding {Kind}={SetId} for {ProviderKey} after image download",
-            hint.Kind,
-            hint.SetId,
-            hint.ProviderKey);
+            "MediUX: Persisted bindings for {ProviderKey}: {Bindings}",
+            providerKey,
+            string.Join(", ", selection.BindingUpdates.Select(kv => $"{kv.Key}={kv.Value.Set}")));
     }
 
     private static IReadOnlyList<MediuxSet> ApplyAuthorFilters(IReadOnlyList<MediuxSet> sets)
@@ -372,12 +426,75 @@ public class MediuxArtworkService
         HashSet<ImageSlotKind>? includeKinds,
         int? seasonFilter,
         int? episodeFilter,
-        string? providerKey)
+        string? providerKey,
+        bool includeAlternatives = true)
     {
         var list = new List<RemoteImageInfo>();
         AppendImages(list, selection.Preferred, includeKinds, seasonFilter, episodeFilter, providerKey);
-        AppendImages(list, selection.Alternatives, includeKinds, seasonFilter, episodeFilter, providerKey);
+        if (includeAlternatives)
+        {
+            AppendImages(list, selection.Alternatives, includeKinds, seasonFilter, episodeFilter, providerKey);
+        }
+
         return list;
+    }
+
+    private void LogPickedSlotSource(
+        SelectedImage? picked,
+        string showName,
+        ImageSlotKind slotKind,
+        string? boundSetId,
+        int? seasonNumber,
+        int? episodeNumber)
+    {
+        var label = slotKind == ImageSlotKind.EpisodeTitleCard
+            ? $"Episode S{seasonNumber}E{episodeNumber}"
+            : $"Season S{seasonNumber}";
+
+        if (picked is null)
+        {
+            _logger.LogDebug(
+                "MediUX: {Label} of {Name} {SlotKind}: no matching image (bound set {BoundSet})",
+                label,
+                showName,
+                slotKind,
+                boundSetId ?? "none");
+            return;
+        }
+
+        var isGapFill = !string.IsNullOrWhiteSpace(boundSetId)
+            && !string.Equals(picked.SourceSet.Id, boundSetId, StringComparison.OrdinalIgnoreCase);
+        _logger.LogDebug(
+            "MediUX: {Label} of {Name} {SlotKind} from set {SetId} ({Author}) [gap-fill: {GapFill}]",
+            label,
+            showName,
+            slotKind,
+            picked.SourceSet.Id,
+            picked.SourceSet.Username ?? "?",
+            isGapFill);
+    }
+
+    private RemoteImageInfo MapPickedImageToRemote(SelectedImage selected)
+    {
+        var slot = selected.Image.Slot;
+        var (type, width, height) = MapType(slot.Kind);
+        var url = _apiClient.BuildAssetUrl(selected.Image.AssetId, selected.Image.ModifiedOn);
+        var previewWidth = MediuxPreviewSizes.GetMaxWidth(slot.Kind);
+        var previewUrl = _apiClient.BuildPreviewUrl(selected.Image.AssetId, selected.Image.ModifiedOn, previewWidth);
+        var providerName = string.IsNullOrEmpty(selected.SourceSet.Username)
+            ? "MediUX"
+            : "MediUX - " + selected.SourceSet.Username;
+
+        return new RemoteImageInfo
+        {
+            ProviderName = providerName,
+            Type = type,
+            Width = width,
+            Height = height,
+            Url = url,
+            Language = NormalizeLanguage(selected.Image.Language),
+            ThumbnailUrl = previewUrl
+        };
     }
 
     private void AppendImages(
@@ -415,8 +532,6 @@ public class MediuxArtworkService
                 ? "MediUX"
                 : "MediUX - " + selected.SourceSet.Username;
 
-            RegisterDownloadBindingHint(url, providerKey, selected);
-
             list.Add(new RemoteImageInfo
             {
                 ProviderName = providerName,
@@ -428,22 +543,6 @@ public class MediuxArtworkService
                 ThumbnailUrl = previewUrl
             });
         }
-    }
-
-    private void RegisterDownloadBindingHint(string url, string? providerKey, SelectedImage selected)
-    {
-        if (string.IsNullOrWhiteSpace(providerKey) || string.IsNullOrWhiteSpace(selected.SourceSet.Id))
-        {
-            return;
-        }
-
-        var kind = SetSelector.GetBindingKind(selected.Image.Slot);
-        if (kind is null)
-        {
-            return;
-        }
-
-        _downloadBindingHints[url] = new DownloadBindingHint(providerKey, selected.SourceSet.Id, kind.Value);
     }
 
     private static (ImageType Type, int Width, int Height) MapType(ImageSlotKind kind)
@@ -468,6 +567,4 @@ public class MediuxArtworkService
 
         return language.Length <= 5 ? language : null;
     }
-
-    private sealed record DownloadBindingHint(string ProviderKey, string SetId, SetBindingKind Kind);
 }

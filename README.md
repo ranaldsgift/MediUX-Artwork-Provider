@@ -31,13 +31,12 @@ The plugin will remember which set has been selected (either automatically or ma
 - Ordered **Author Priority** (highest complete set wins for preferred images)
 - Gap-fill from other complete/popular sets for missing image types
 - Sticky set bindings (preferred sets remembered after download)
-- Browse By **Fanart Sets** in the image editor (requires File Transformation)
+- Browse By **Fanart Sets** in the image editor
 
 ## Requirements
 
 - Jellyfin **10.10.7** or **10.11.x** or **12**
 - MediUX beta API token
-- For browsing fanart sets within Jellyfin: [File Transformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) plugin by [IAmParadox27](https://github.com/IAmParadox27).
 
 ## Installation
 
@@ -69,7 +68,7 @@ dotnet build Jellyfin.Plugin.Mediux/Jellyfin.Plugin.Mediux.csproj -c Release
 | Jellyfin | Framework | Output |
 |----------|-----------|--------|
 | 10.10.7 | net8.0 | `dist/10.10.7/` |
-| 10.11.x | net9.0 | `dist/10.11/` |
+| 10.11.x / 12 | net9.0 | `dist/10.11/` |
 
 ## How set selection works
 

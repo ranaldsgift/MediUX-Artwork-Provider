@@ -14,6 +14,10 @@
     var setDownloadActiveJob = null;
     var setDownloadConcurrencyCache = null;
     var setDownloadConcurrencyPromise = null;
+    var rememberBrowseByCache = null;
+    var rememberBrowseByPromise = null;
+
+    var BROWSE_BY_STORAGE_KEY = 'mediux.browseBy';
 
     function getApiHeaders() {
         var token = window.ApiClient && window.ApiClient.accessToken && window.ApiClient.accessToken();
@@ -216,11 +220,6 @@
         if (option) {
             option.disabled = !enabled;
         }
-
-        if (!enabled && select.value === 'fanartSets') {
-            select.value = 'imageType';
-            setBrowseMode(dialog, 'imageType');
-        }
     }
 
     function applyMediuxBaseResult(dialog, result) {
@@ -229,6 +228,11 @@
             dialog.setAttribute('data-mediux-sets-eligible', 'true');
             dialog.setAttribute('data-mediux-media-type', result.mediaType || '');
             setFanartSetsOptionEnabled(dialog, true);
+
+            var browseSelect = dialog.querySelector('#selectMediuxBrowseBy');
+            if (browseSelect) {
+                applyRememberedBrowseBy(dialog, browseSelect);
+            }
             return;
         }
 
@@ -610,6 +614,20 @@
         return kind === 'seasonPosters' || kind === 'titlecards';
     }
 
+    function getSeasonSlotKey(img) {
+        if (!img || img.seasonNumber == null || img.seasonNumber === '') {
+            return null;
+        }
+        return 'S' + Number(img.seasonNumber);
+    }
+
+    function getEpisodeSlotKey(img) {
+        if (!img || img.seasonNumber == null || img.episodeNumber == null) {
+            return null;
+        }
+        return 'S' + Number(img.seasonNumber) + 'E' + Number(img.episodeNumber);
+    }
+
     function getProviderKey(itemId) {
         if (!itemId || !window.ApiClient) {
             return Promise.resolve(null);
@@ -689,15 +707,75 @@
         return setDownloadConcurrencyPromise;
     }
 
-    function postSetBindings(providerKey, updates) {
-        if (!providerKey || !updates || !window.ApiClient) {
+    function readSavedBrowseBy() {
+        try {
+            var savedMode = localStorage.getItem(BROWSE_BY_STORAGE_KEY);
+            if (savedMode === 'fanartSets' || savedMode === 'imageType') {
+                return savedMode;
+            }
+        } catch (e) { /* ignore */ }
+
+        return null;
+    }
+
+    function writeSavedBrowseBy(value) {
+        try {
+            localStorage.setItem(BROWSE_BY_STORAGE_KEY, value);
+        } catch (e) { /* ignore */ }
+    }
+
+    function getRememberBrowseBy() {
+        if (rememberBrowseByCache != null) {
+            return Promise.resolve(rememberBrowseByCache);
+        }
+
+        if (rememberBrowseByPromise) {
+            return rememberBrowseByPromise;
+        }
+
+        if (!window.ApiClient || !ApiClient.getPluginConfiguration) {
+            rememberBrowseByCache = false;
+            return Promise.resolve(rememberBrowseByCache);
+        }
+
+        rememberBrowseByPromise = ApiClient.getPluginConfiguration(PLUGIN_UNIQUE_ID).then(function (config) {
+            rememberBrowseByCache = !!(config && config.RememberBrowseBy);
+            return rememberBrowseByCache;
+        }).catch(function () {
+            rememberBrowseByCache = false;
+            return rememberBrowseByCache;
+        }).then(function (value) {
+            rememberBrowseByPromise = null;
+            return value;
+        });
+
+        return rememberBrowseByPromise;
+    }
+
+    function applyRememberedBrowseBy(dialog, select) {
+        getRememberBrowseBy().then(function (remember) {
+            if (remember) {
+                var savedMode = readSavedBrowseBy();
+                if (savedMode) {
+                    select.value = savedMode;
+                }
+            }
+
+            if (dialog.getAttribute('data-mediux-sets-eligible') === 'true') {
+                setBrowseMode(dialog, select.value);
+            }
+        });
+    }
+
+    function postSetBindings(providerKey, updates, lockSets) {
+        if (!providerKey || !window.ApiClient) {
             return Promise.resolve();
         }
 
-        var body = { providerKey: providerKey };
+        var body = { providerKey: providerKey, lockSets: !!lockSets };
         var hasAny = false;
-        Object.keys(updates).forEach(function (key) {
-            if (updates[key]) {
+        Object.keys(updates || {}).forEach(function (key) {
+            if (updates[key] && updates[key].set) {
                 body[key] = updates[key];
                 hasAny = true;
             }
@@ -716,12 +794,37 @@
         });
     }
 
-    function updateBindingsForImages(itemId, setId, images, allowMultiItemKinds) {
+    function bindingSetId(binding) {
+        var normalized = normalizeBinding(binding);
+        return normalized ? normalized.set : null;
+    }
+
+    function normalizeBinding(binding) {
+        if (!binding) {
+            return null;
+        }
+        if (typeof binding === 'string') {
+            return { set: binding, author: '', locked: false };
+        }
+        var setId = binding.set || binding.Set || null;
+        if (!setId) {
+            return null;
+        }
+        return {
+            set: setId,
+            author: binding.author || binding.Author || '',
+            locked: !!(binding.locked || binding.Locked)
+        };
+    }
+
+    function updateBindingsForImages(itemId, setId, images, allowMultiItemKinds, lockSets, author) {
         if (!setId || !images || !images.length) {
             return Promise.resolve();
         }
 
         var updates = {};
+        var seenKinds = {};
+
         images.forEach(function (img) {
             var kind = getImageBindingKind(img);
             if (!kind) {
@@ -730,11 +833,17 @@
             if (!allowMultiItemKinds && isMultiItemBindingKind(kind)) {
                 return;
             }
-            updates[kind] = setId;
+            if (!seenKinds[kind]) {
+                seenKinds[kind] = true;
+                updates[kind] = {
+                    set: setId,
+                    author: author || ''
+                };
+            }
         });
 
         return getProviderKey(itemId).then(function (providerKey) {
-            return postSetBindings(providerKey, updates);
+            return postSetBindings(providerKey, updates, !!lockSets);
         }).then(function () {
             refreshBindingsBannerForItem(itemId);
         });
@@ -1015,8 +1124,10 @@
         setDownloadQueue.push({
             setId: job.setId,
             setTitle: job.setTitle || 'MediUX',
+            username: job.username || '',
             itemId: job.itemId,
             images: job.images.slice(),
+            lockSets: !!job.lockSets,
             cancelRequested: false,
             done: 0,
             total: job.images.length,
@@ -1049,7 +1160,7 @@
             var completed = result && result.completed;
             console.debug('[MediUX] set download job finished', next.setTitle, 'completed=', !!completed);
             if (completed) {
-                return updateBindingsForImages(next.itemId, next.setId, next.images, true);
+                return updateBindingsForImages(next.itemId, next.setId, next.images, true, next.lockSets, next.username);
             }
             return null;
         }).catch(function (err) {
@@ -1146,6 +1257,11 @@
                 '<div class="mediux-download-set-content" style="margin:0;padding:1.25em 1.5em 1.5em;">',
                 '  <h2 style="margin:0 0 0.75em;">Download Set</h2>',
                 checksHtml,
+                '  <hr style="margin:1em 0;border:none;border-top:1px solid rgba(255,255,255,0.15);" />',
+                '  <label class="checkboxContainer emby-checkbox-label">',
+                '    <input type="checkbox" is="emby-checkbox" class="chkMediuxUseAsDesired" />',
+                '    <span>Lock any sets downloaded as desired sets</span>',
+                '  </label>',
                 '  <div style="display:flex;gap:0.75em;justify-content:flex-end;margin-top:1.25em;">',
                 '    <button is="emby-button" type="button" class="btnCancel raised button-cancel">Cancel</button>',
                 '    <button is="emby-button" type="button" class="btnConfirm raised button-submit">Download</button>',
@@ -1184,13 +1300,17 @@
                         }
                     });
 
+                    var lockSets = !!(dlg.querySelector('.chkMediuxUseAsDesired') && dlg.querySelector('.chkMediuxUseAsDesired').checked);
+
                     if (selected.length) {
                         var filtered = filterImagesByBindingKinds(images, selected);
                         enqueueSetDownload({
                             setId: set.setId,
                             setTitle: set.setTitle,
+                            username: set.username || '',
                             itemId: itemId,
-                            images: filtered
+                            images: filtered,
+                            lockSets: lockSets
                         });
                     }
 
@@ -1223,7 +1343,7 @@
         return map;
     }
 
-    function createBindingSlotCell(label, setId, setLookup) {
+    function createBindingSlotCell(label, binding, setLookup) {
         var cell = document.createElement('div');
         cell.className = 'mediux-bindings-cell';
 
@@ -1232,6 +1352,8 @@
         labelEl.textContent = label + ': ';
         cell.appendChild(labelEl);
 
+        var normalized = normalizeBinding(binding);
+        var setId = normalized ? normalized.set : null;
         if (!setId) {
             var noneEl = document.createElement('span');
             noneEl.className = 'mediux-bindings-none';
@@ -1241,7 +1363,9 @@
         }
 
         var set = setLookup[String(setId)];
-        var author = set && set.username ? set.username : ('Set ' + setId);
+        var author = (normalized && normalized.author)
+            || (set && set.username)
+            || ('Set ' + setId);
         var setTitle = set && set.setTitle ? set.setTitle : '';
 
         var link = document.createElement('a');
@@ -1249,7 +1373,7 @@
         link.href = 'https://mediux.pro/sets/' + encodeURIComponent(setId);
         link.target = '_blank';
         link.rel = 'noopener noreferrer';
-        link.textContent = author;
+        link.textContent = author + (normalized && normalized.locked ? ' (locked)' : '');
         if (setTitle) {
             link.title = setTitle;
         }
@@ -1519,9 +1643,13 @@
         return dlBtn;
     }
 
-    function createImageCard(img, itemId, setId) {
+    function createImageCard(img, itemId, setId, setUsername) {
         var card = document.createElement('div');
         card.className = 'mediux-img-card card cardBox visualCardBox';
+        card.setAttribute('data-mediux-asset-id', img.assetId || '');
+        if (img.version) {
+            card.setAttribute('data-mediux-version', img.version);
+        }
         if (img.slotKind === 'Backdrop' || img.slotKind === 'EpisodeTitleCard' || img.slotKind === 'Logo') {
             card.classList.add('backdropArt');
         } else if (img.slotKind === 'AlbumArt') {
@@ -1554,7 +1682,7 @@
             ensureChildrenForImages(itemId, [img]).then(function (children) {
                 return downloadMediuxImage(itemId, img, children);
             }).then(function () {
-                return updateBindingsForImages(itemId, setId, [img], false);
+                return updateBindingsForImages(itemId, setId, [img], false, false, setUsername || '');
             }).then(function () {
                 dlBtn.querySelector('.material-icons').textContent = 'check';
                 dlBtn.disabled = false;
@@ -1584,13 +1712,14 @@
         return buttons;
     }
 
-    function renderImageRow(parent, label, images, itemId, setId) {
+    function renderImageRow(parent, label, images, itemId, setId, setUsername) {
         if (!images || images.length === 0 || !label) {
             return;
         }
 
         var row = document.createElement('div');
         row.className = 'verticalSection mediux-images-row emby-scroller-container';
+
 
         var rowLabel = document.createElement('h2');
         rowLabel.className = 'sectionTitle sectionTitle-cards mediux-images-row-label';
@@ -1610,7 +1739,7 @@
         items.className = 'itemsContainer scrollSlider focuscontainer-x';
 
         sortImages(images).forEach(function (img) {
-            items.appendChild(createImageCard(img, itemId, setId));
+            items.appendChild(createImageCard(img, itemId, setId, setUsername));
         });
 
         scroller.appendChild(items);
@@ -1676,6 +1805,18 @@
             actionArea.style.alignItems = 'center';
             actionArea.style.gap = '0.5em';
 
+            var refreshBtn = document.createElement('button');
+            refreshBtn.className = 'paper-icon-button-light';
+            refreshBtn.type = 'button';
+            refreshBtn.title = 'Refresh set from MediUX';
+            refreshBtn.setAttribute('is', 'paper-icon-button-light');
+            refreshBtn.innerHTML = '<span class="material-icons refresh" aria-hidden="true"></span>';
+            refreshBtn.addEventListener('click', function () {
+                refreshBtn.disabled = true;
+                refreshBrowseSet(itemId, set.setId, setEl, refreshBtn);
+            });
+            actionArea.appendChild(refreshBtn);
+
             var dlAllBtn = document.createElement('button');
             dlAllBtn.className = 'emby-button raised button-submit';
             dlAllBtn.type = 'button';
@@ -1689,6 +1830,7 @@
             actionArea.appendChild(dlAllBtn);
 
             header.appendChild(actionArea);
+            setEl.setAttribute('data-mediux-set-id', set.setId || '');
             setEl.appendChild(header);
 
             var images = set.images || [];
@@ -1704,11 +1846,131 @@
                 { label: 'Logo', count: countSlotKind(images, 'Logo') }
             ]);
 
-            renderImageRow(setEl, posterLabel, grouped.posters, itemId, set.setId);
-            renderImageRow(setEl, wideLabel, grouped.wides, itemId, set.setId);
+            renderImageRow(setEl, posterLabel, grouped.posters, itemId, set.setId, set.username);
+            renderImageRow(setEl, wideLabel, grouped.wides, itemId, set.setId, set.username);
 
             root.appendChild(setEl);
         });
+    }
+
+    function refreshBrowseSet(itemId, setId, setEl, refreshBtn) {
+        if (!itemId || !setId || !window.ApiClient) {
+            if (refreshBtn) {
+                refreshBtn.disabled = false;
+            }
+            return;
+        }
+
+        fetch(window.ApiClient.getUrl('MediUX/Sets', { itemId: itemId, forceRefresh: true }), { headers: getApiHeaders() })
+            .then(function (resp) { return resp.json(); })
+            .then(function (payload) {
+                var sets = Array.isArray(payload) ? payload : (payload && payload.sets) || [];
+                var diffs = (payload && payload.diffs) || {};
+                var fresh = null;
+                for (var i = 0; i < sets.length; i++) {
+                    if (String(sets[i].setId) === String(setId)) {
+                        fresh = sets[i];
+                        break;
+                    }
+                }
+
+                if (!fresh) {
+                    setEl.remove();
+                    return;
+                }
+
+                var diff = diffs[String(setId)] || { added: [], changed: [], removed: [] };
+                patchSetElement(setEl, fresh, itemId, diff);
+
+                var panel = setEl.closest('.mediux-setbrowser-panel');
+                if (panel) {
+                    try {
+                        panel.setAttribute('data-mediux-sets-json', JSON.stringify((sets || []).map(function (s) {
+                            return { setId: s.setId, setTitle: s.setTitle, username: s.username };
+                        })));
+                    } catch (e) { /* ignore */ }
+                    var banner = panel.querySelector('.mediux-bindings-banner');
+                    if (banner) {
+                        fetchSetBindings(itemId).then(function (bindings) {
+                            renderBindingsBanner(banner, bindings, sets, panel.getAttribute('data-mediux-media-type') || '');
+                        });
+                    }
+                }
+            })
+            .catch(function () { /* best-effort */ })
+            .then(function () {
+                if (refreshBtn) {
+                    refreshBtn.disabled = false;
+                }
+            });
+    }
+
+    function patchSetElement(setEl, freshSet, itemId, diff) {
+        var removed = {};
+        (diff.removed || []).forEach(function (id) { removed[id] = true; });
+        var changed = {};
+        (diff.changed || []).forEach(function (id) { changed[id] = true; });
+        var added = {};
+        (diff.added || []).forEach(function (id) { added[id] = true; });
+
+        var cards = setEl.querySelectorAll('.mediux-img-card[data-mediux-asset-id]');
+        for (var i = 0; i < cards.length; i++) {
+            var assetId = cards[i].getAttribute('data-mediux-asset-id');
+            if (removed[assetId]) {
+                cards[i].remove();
+            }
+        }
+
+        var byId = {};
+        (freshSet.images || []).forEach(function (img) {
+            if (img && img.assetId) {
+                byId[img.assetId] = img;
+            }
+        });
+
+        var existingCards = setEl.querySelectorAll('.mediux-img-card[data-mediux-asset-id]');
+        for (var j = 0; j < existingCards.length; j++) {
+            var id = existingCards[j].getAttribute('data-mediux-asset-id');
+            if (!(changed[id] || added[id])) {
+                continue;
+            }
+            var img = byId[id];
+            if (!img) {
+                continue;
+            }
+            var imgEl = existingCards[j].querySelector('img');
+            if (imgEl) {
+                existingCards[j].setAttribute('data-mediux-version', img.version || '');
+                attachPreviewImage(imgEl, img);
+            }
+        }
+
+        // Rebuild rows when there are additions (simpler than finding the right scroller).
+        if ((diff.added && diff.added.length) || (diff.removed && diff.removed.length)) {
+            var rows = setEl.querySelectorAll('.mediux-images-row');
+            for (var r = 0; r < rows.length; r++) {
+                rows[r].remove();
+            }
+            var images = freshSet.images || [];
+            var grouped = groupSetImages(images);
+            var posterLabel = buildRowLabel([
+                { label: 'Poster', count: countSlotKind(images, 'Primary') },
+                { label: 'Season Posters', count: countSlotKind(images, 'SeasonPrimary') }
+            ]);
+            var wideLabel = buildRowLabel([
+                { label: 'Backdrop', count: countSlotKind(images, 'Backdrop') },
+                { label: 'Titlecards', count: countSlotKind(images, 'EpisodeTitleCard') },
+                { label: 'Album Art', count: countSlotKind(images, 'AlbumArt') },
+                { label: 'Logo', count: countSlotKind(images, 'Logo') }
+            ]);
+            renderImageRow(setEl, posterLabel, grouped.posters, itemId, freshSet.setId, freshSet.username);
+            renderImageRow(setEl, wideLabel, grouped.wides, itemId, freshSet.setId, freshSet.username);
+        }
+
+        var meta = setEl.querySelector('.mediux-set-meta');
+        if (meta) {
+            meta.textContent = ' \u2022 ' + (freshSet.imageCount || (freshSet.images || []).length) + ' images';
+        }
     }
 
     function loadSetsIntoPanel(dialog, panel, attempt) {
@@ -1742,10 +2004,6 @@
             return;
         }
 
-        if (panel.getAttribute('data-mediux-loaded') === 'true') {
-            return;
-        }
-
         var mediaType = dialog.getAttribute('data-mediux-media-type') || '';
         root.innerHTML = '<div class="mediux-loading">Loading sets from MediUX...</div>';
 
@@ -1754,7 +2012,8 @@
                 .then(function (resp) { return resp.json(); }),
             fetchSetBindings(itemId)
         ]).then(function (results) {
-            var sets = results[0];
+            var payload = results[0];
+            var sets = Array.isArray(payload) ? payload : (payload && payload.sets) || [];
             var bindings = results[1];
             panel.setAttribute('data-mediux-loaded', 'true');
             panel.setAttribute('data-mediux-item-id', itemId);
@@ -1787,14 +2046,13 @@
         if (!inner) return;
 
         if (mode === 'fanartSets') {
-            if (dialog.getAttribute('data-mediux-sets-eligible') !== 'true') {
-                var browseSelect = dialog.querySelector('#selectMediuxBrowseBy');
-                if (browseSelect) {
-                    browseSelect.value = 'imageType';
-                }
+            var eligibility = dialog.getAttribute('data-mediux-sets-eligible');
+            if (eligibility !== 'true') {
+                dialog.setAttribute('data-mediux-pending-browse-mode', 'fanartSets');
                 return;
             }
 
+            dialog.removeAttribute('data-mediux-pending-browse-mode');
             inner.classList.add('mediux-fanart-sets-mode');
             setStandardControlsEnabled(dialog, false);
             var panel = inner.querySelector('.mediux-setbrowser-panel');
@@ -1802,6 +2060,7 @@
                 loadSetsIntoPanel(dialog, panel);
             }
         } else {
+            dialog.removeAttribute('data-mediux-pending-browse-mode');
             inner.classList.remove('mediux-fanart-sets-mode');
             setStandardControlsEnabled(dialog, true);
         }
@@ -1887,9 +2146,17 @@
         markStandardControls(dialog);
 
         var select = browseWrap.querySelector('#selectMediuxBrowseBy');
+
         select.addEventListener('change', function () {
-            setBrowseMode(dialog, select.value);
+            getRememberBrowseBy().then(function (remember) {
+                if (remember) {
+                    writeSavedBrowseBy(select.value);
+                }
+                setBrowseMode(dialog, select.value);
+            });
         });
+
+        applyRememberedBrowseBy(dialog, select);
 
         setFanartSetsOptionEnabled(dialog, false);
         dialog.setAttribute('data-mediux-sets-eligible', 'pending');

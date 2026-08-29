@@ -43,6 +43,27 @@ public class PluginConfiguration : BasePluginConfiguration
     public int SetDownloadConcurrency { get; set; } = 6;
 
     /// <summary>
+    /// Gets or sets a value indicating whether Upgrade Until tracking is enabled.
+    /// </summary>
+    public bool EnableUpgradeUntil { get; set; }
+
+    /// <summary>
+    /// Gets or sets the exclusive index into <see cref="PriorityCreators"/> for the Upgrade Until ceiling.
+    /// Authors at indices [0 .. UpgradeUntilIndex) are considered desired.
+    /// </summary>
+    public int UpgradeUntilIndex { get; set; } = 1;
+
+    /// <summary>
+    /// Gets or sets how many days MediUX fanart set-list responses stay cached (0 = always refetch).
+    /// </summary>
+    public int SetListCacheDays { get; set; } = 1;
+
+    /// <summary>
+    /// Gets or sets whether the Search Images modal restores the last Browse By selection from browser storage.
+    /// </summary>
+    public bool RememberBrowseBy { get; set; }
+
+    /// <summary>
     /// Parses <see cref="PriorityCreators"/> into an ordered username list.
     /// </summary>
     /// <returns>Ordered creator usernames.</returns>

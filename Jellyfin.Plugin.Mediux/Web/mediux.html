@@ -50,6 +50,16 @@
 				#MediuxConfigPage .mediux-author-actions {
 					margin-bottom: 1.25em;
 				}
+
+				#MediuxConfigPage .mediux-upgrade-until-row {
+					background: rgba(128, 128, 128, 0.12);
+					font-weight: 600;
+					text-align: center;
+				}
+
+				#MediuxConfigPage .mediux-upgrade-until-row .listItemBody {
+					padding: 0.45em 0;
+				}
 			</style>
 
 			<form id="MediuxConfigForm">
@@ -74,6 +84,15 @@
 						authors are also prioritized when automatically downloading artwork via a library scan or when manually refreshing
 						an item.
 					</div>
+					<div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 0.75em">
+						<label class="emby-checkbox-label">
+							<input id="chkEnableUpgradeUntil" type="checkbox" is="emby-checkbox" />
+							<span>Upgrade until a desired set is found</span>
+						</label>
+						<div class="fieldDescription checkboxFieldDescription">
+							When enabled, fanart sets will be upgraded until a set from an author above the "upgrade until" cutoff is found.
+						</div>
+					</div>
 					<div id="authorPriorityList" class="mediux-author-list paperList"></div>
 					<div class="mediux-author-actions">
 						<button id="btnAddAuthor" is="emby-button" type="button" class="raised block">
@@ -95,7 +114,8 @@
 				<div class="verticalSection">
 					<h3 class="sectionTitle">Excluded Authors</h3>
 					<div class="fieldDescription">
-						Artwork sets from these authors will not be downloaded automatically, and will not appear as a result when searching for artwork.
+						Artwork sets from these authors will not be downloaded automatically, and will not appear as a result when searching
+						for artwork.
 					</div>
 					<div id="authorExcludedList" class="mediux-author-list paperList"></div>
 					<div class="mediux-author-actions">
@@ -115,10 +135,31 @@
 				</div>
 
 				<div class="inputContainer">
-					<label class="inputLabel inputLabelUnfocused" for="txtSetDownloadConcurrency">Max number of simultaneous downloads per set</label>
+					<label class="inputLabel inputLabelUnfocused" for="txtSetDownloadConcurrency"
+						>Max number of simultaneous downloads per set</label
+					>
 					<input id="txtSetDownloadConcurrency" type="number" is="emby-input" min="1" max="16" step="1" />
 					<div class="fieldDescription">
 						How many images from one set download in parallel. Sets themselves still download one after another.
+					</div>
+				</div>
+
+				<div class="inputContainer">
+					<label class="inputLabel inputLabelUnfocused" for="txtSetListCacheDays">Fanart set list cache (days)</label>
+					<input id="txtSetListCacheDays" type="number" is="emby-input" min="0" max="30" step="1" />
+					<div class="fieldDescription">
+						How long MediUX fanart set responses are reused before refetching. Use 0 to always refetch. Default is 1 day.
+					</div>
+				</div>
+
+				<div class="checkboxContainer checkboxContainer-withDescription">
+					<label class="emby-checkbox-label">
+						<input id="chkRememberBrowseBy" type="checkbox" is="emby-checkbox" />
+						<span>Remember 'Browse By' Selection in Search Images Modal</span>
+					</label>
+					<div class="fieldDescription checkboxFieldDescription">
+						When enabled, the last Browse By choice (Image Type or Fanart Sets) is restored the next time you open Search Images
+						on this browser.
 					</div>
 				</div>
 

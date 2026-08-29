@@ -205,92 +205,136 @@ public class MediuxApiClient
     /// <summary>
     /// Gets movie sets for a TMDB id.
     /// </summary>
-    public async Task<IReadOnlyList<MediuxSet>> GetMovieSetsAsync(string tmdbId, CancellationToken cancellationToken)
+    public Task<IReadOnlyList<MediuxSet>> GetMovieSetsAsync(string tmdbId, CancellationToken cancellationToken)
+        => GetMovieSetsAsync(tmdbId, forceRefresh: false, cancellationToken);
+
+    /// <summary>
+    /// Gets movie sets for a TMDB id, optionally bypassing the disk cache.
+    /// </summary>
+    public async Task<IReadOnlyList<MediuxSet>> GetMovieSetsAsync(
+        string tmdbId,
+        bool forceRefresh,
+        CancellationToken cancellationToken)
+    {
+        var result = await GetMovieSetsWithPriorAsync(tmdbId, forceRefresh, cancellationToken).ConfigureAwait(false);
+        return result.Sets;
+    }
+
+    /// <summary>
+    /// Gets movie sets and the prior cache snapshot (when force-refreshing).
+    /// </summary>
+    public async Task<(IReadOnlyList<MediuxSet> Sets, IReadOnlyList<MediuxSet>? Prior)> GetMovieSetsWithPriorAsync(
+        string tmdbId,
+        bool forceRefresh,
+        CancellationToken cancellationToken)
     {
         var cachePath = GetCachePath("movies", tmdbId + ".json");
-        if (TryGetFreshCacheBytes(cachePath, out var bytes))
+        IReadOnlyList<MediuxSet>? prior = null;
+        if (TryReadCacheBytes(cachePath, out var priorBytes))
+        {
+            prior = DeserializeSets(priorBytes);
+        }
+
+        if (!forceRefresh && TryGetFreshCacheBytes(cachePath, out var bytes))
         {
             var cached = DeserializeSets(bytes);
             _logger.LogDebug("MediUX: Movie {TmdbId} has {Count} cached sets", tmdbId, cached?.Count ?? 0);
-            return cached ?? [];
+            return (cached ?? [], prior);
         }
 
         try
         {
-            _logger.LogDebug("MediUX: Fetching movie sets for TMDB {TmdbId}", tmdbId);
+            _logger.LogDebug("MediUX: Fetching movie sets for TMDB {TmdbId} (forceRefresh={Force})", tmdbId, forceRefresh);
             var data = await PostGraphQlAsync<MovieSetsData>(
                 MovieSetsQuery,
                 new { tmdb_id = tmdbId },
                 cancellationToken).ConfigureAwait(false);
-
-            _logger.LogDebug("MediUX: Movie {TmdbId} raw response - movies_by_id is {Status}, movie_sets count = {Count}",
-                tmdbId,
-                data?.MoviesById is null ? "null" : "present",
-                data?.MoviesById?.MovieSets?.Count ?? 0);
 
             var sets = MapMovieSets(data?.MoviesById?.MovieSets);
             _logger.LogInformation("MediUX: Movie {TmdbId} found {Count} sets with {ImageCount} total images",
                 tmdbId, sets.Count, sets.Sum(s => s.Images.Count));
 
             await WriteJsonCacheAsync(cachePath, sets, cancellationToken).ConfigureAwait(false);
-            return sets;
+            return (sets, prior);
         }
         catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             _logger.LogWarning("MediUX: Movie {TmdbId} not found on MediUX (404)", tmdbId);
             await WriteJsonCacheAsync(cachePath, Array.Empty<MediuxSet>(), cancellationToken).ConfigureAwait(false);
-            return [];
+            return ([], prior);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "MediUX: Error fetching movie sets for TMDB {TmdbId}", tmdbId);
-            return [];
+            return (prior ?? [], prior);
         }
     }
 
     /// <summary>
     /// Gets show sets for a TMDB id.
     /// </summary>
-    public async Task<IReadOnlyList<MediuxSet>> GetShowSetsAsync(string tmdbId, CancellationToken cancellationToken)
+    public Task<IReadOnlyList<MediuxSet>> GetShowSetsAsync(string tmdbId, CancellationToken cancellationToken)
+        => GetShowSetsAsync(tmdbId, forceRefresh: false, cancellationToken);
+
+    /// <summary>
+    /// Gets show sets for a TMDB id, optionally bypassing the disk cache.
+    /// </summary>
+    public async Task<IReadOnlyList<MediuxSet>> GetShowSetsAsync(
+        string tmdbId,
+        bool forceRefresh,
+        CancellationToken cancellationToken)
+    {
+        var result = await GetShowSetsWithPriorAsync(tmdbId, forceRefresh, cancellationToken).ConfigureAwait(false);
+        return result.Sets;
+    }
+
+    /// <summary>
+    /// Gets show sets and the prior cache snapshot (when force-refreshing).
+    /// </summary>
+    public async Task<(IReadOnlyList<MediuxSet> Sets, IReadOnlyList<MediuxSet>? Prior)> GetShowSetsWithPriorAsync(
+        string tmdbId,
+        bool forceRefresh,
+        CancellationToken cancellationToken)
     {
         var cachePath = GetCachePath("shows", tmdbId + ".json");
-        if (TryGetFreshCacheBytes(cachePath, out var bytes))
+        IReadOnlyList<MediuxSet>? prior = null;
+        if (TryReadCacheBytes(cachePath, out var priorBytes))
+        {
+            prior = DeserializeSets(priorBytes);
+        }
+
+        if (!forceRefresh && TryGetFreshCacheBytes(cachePath, out var bytes))
         {
             var cached = DeserializeSets(bytes);
             _logger.LogDebug("MediUX: Show {TmdbId} has {Count} cached sets", tmdbId, cached?.Count ?? 0);
-            return cached ?? [];
+            return (cached ?? [], prior);
         }
 
         try
         {
-            _logger.LogDebug("MediUX: Fetching show sets for TMDB {TmdbId}", tmdbId);
+            _logger.LogDebug("MediUX: Fetching show sets for TMDB {TmdbId} (forceRefresh={Force})", tmdbId, forceRefresh);
             var data = await PostGraphQlAsync<ShowSetsData>(
                 ShowSetsQuery,
                 new { tmdb_id = tmdbId },
                 cancellationToken).ConfigureAwait(false);
-
-            _logger.LogDebug("MediUX: Show {TmdbId} raw response - shows_by_id is {Status}, show_sets count = {Count}",
-                tmdbId,
-                data?.ShowsById is null ? "null" : "present",
-                data?.ShowsById?.ShowSets?.Count ?? 0);
 
             var sets = MapShowSets(data?.ShowsById?.ShowSets);
             _logger.LogInformation("MediUX: Show {TmdbId} found {Count} sets with {ImageCount} total images",
                 tmdbId, sets.Count, sets.Sum(s => s.Images.Count));
 
             await WriteJsonCacheAsync(cachePath, sets, cancellationToken).ConfigureAwait(false);
-            return sets;
+            return (sets, prior);
         }
         catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             _logger.LogWarning("MediUX: Show {TmdbId} not found on MediUX (404)", tmdbId);
             await WriteJsonCacheAsync(cachePath, Array.Empty<MediuxSet>(), cancellationToken).ConfigureAwait(false);
-            return [];
+            return ([], prior);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "MediUX: Error fetching show sets for TMDB {TmdbId}", tmdbId);
-            return [];
+            return (prior ?? [], prior);
         }
     }
 
@@ -628,15 +672,33 @@ public class MediuxApiClient
     private bool TryGetFreshCacheBytes(string path, out byte[] bytes)
     {
         bytes = [];
-        var info = _fileSystem.GetFileSystemInfo(path);
-        if (!info.Exists)
+        if (!TryReadCacheBytes(path, out bytes))
         {
             return false;
         }
 
-        if ((DateTime.UtcNow - _fileSystem.GetLastWriteTimeUtc(info)).TotalDays > 2)
+        var info = _fileSystem.GetFileSystemInfo(path);
+        var maxDays = GetSetListCacheDays();
+        if (maxDays <= 0)
+        {
+            return false;
+        }
+
+        if ((DateTime.UtcNow - _fileSystem.GetLastWriteTimeUtc(info)).TotalDays > maxDays)
         {
             _logger.LogDebug("MediUX: Cache expired for {Path}", path);
+            return false;
+        }
+
+        return true;
+    }
+
+    private bool TryReadCacheBytes(string path, out byte[] bytes)
+    {
+        bytes = [];
+        var info = _fileSystem.GetFileSystemInfo(path);
+        if (!info.Exists)
+        {
             return false;
         }
 
@@ -647,14 +709,31 @@ public class MediuxApiClient
     private bool TryReadCache(string path, out string value)
     {
         value = string.Empty;
-        var info = _fileSystem.GetFileSystemInfo(path);
-        if (!info.Exists || (DateTime.UtcNow - _fileSystem.GetLastWriteTimeUtc(info)).TotalDays > 2)
+        if (!TryReadCacheBytes(path, out var bytes))
         {
             return false;
         }
 
-        value = File.ReadAllText(path).Trim().Trim('"');
+        var info = _fileSystem.GetFileSystemInfo(path);
+        var maxDays = GetSetListCacheDays();
+        if (maxDays > 0 && (DateTime.UtcNow - _fileSystem.GetLastWriteTimeUtc(info)).TotalDays > maxDays)
+        {
+            return false;
+        }
+
+        value = Encoding.UTF8.GetString(bytes).Trim().Trim('"');
         return true;
+    }
+
+    private static int GetSetListCacheDays()
+    {
+        var days = Plugin.Instance?.Configuration.SetListCacheDays ?? 1;
+        if (days < 0)
+        {
+            return 0;
+        }
+
+        return days > 30 ? 30 : days;
     }
 
     private static async Task WriteCacheAsync(string path, string value, CancellationToken cancellationToken)

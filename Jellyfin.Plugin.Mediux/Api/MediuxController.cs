@@ -52,8 +52,9 @@ public class MediuxController : ControllerBase
     [HttpGet("Sets")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<IReadOnlyList<SetBrowserDto>>> GetSets(
+    public async Task<ActionResult> GetSets(
         [FromQuery] Guid itemId,
+        [FromQuery] bool forceRefresh,
         CancellationToken cancellationToken)
     {
         var item = _libraryManager.GetItemById(itemId);
@@ -68,9 +69,10 @@ public class MediuxController : ControllerBase
         }
 
         IReadOnlyList<MediuxSet> sets;
+        IReadOnlyList<MediuxSet>? prior = null;
         try
         {
-            sets = await ResolveSetsAsync(item, cancellationToken).ConfigureAwait(false);
+            (sets, prior) = await ResolveSetsWithPriorAsync(item, forceRefresh, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -85,32 +87,28 @@ public class MediuxController : ControllerBase
         sets = SetSelector.FilterSets(sets, priorityCreators, excludedCreators, onlyPrioritized);
         var orderedSets = SetSelector.OrderSetsForBrowser(sets, priorityCreators);
 
-        var result = orderedSets.Select(s => new SetBrowserDto
-        {
-            SetId = s.Id,
-            SetTitle = s.SetTitle,
-            Username = s.Username,
-            Popularity = s.EffectivePopularity,
-            ImageCount = s.Images.Count,
-            Images = s.Images.Select(img =>
-            {
-                var previewWidth = MediuxPreviewSizes.GetMaxWidth(img.Slot.Kind);
-                return new SetImageDto
-                {
-                    AssetId = img.AssetId,
-                    SlotKind = img.Slot.Kind.ToString(),
-                    SeasonNumber = img.Slot.SeasonNumber,
-                    EpisodeNumber = img.Slot.EpisodeNumber,
-                    Url = _apiClient.BuildAssetUrl(img.AssetId, img.ModifiedOn),
-                    PreviewUrl = _apiClient.BuildPreviewUrl(img.AssetId, img.ModifiedOn, previewWidth),
-                    Version = MediuxApiClient.FormatAssetVersion(img.ModifiedOn),
-                    PreviewWidth = previewWidth,
-                    Language = img.Language
-                };
-            }).ToList()
-        }).ToList();
+        var result = orderedSets.Select(MapSetBrowserDto).ToList();
 
-        return Ok(result);
+        if (!forceRefresh)
+        {
+            return Ok(result);
+        }
+
+        var priorFiltered = prior is null
+            ? null
+            : SetSelector.FilterSets(prior, priorityCreators, excludedCreators, onlyPrioritized);
+        var diffs = SetListDiff.Diff(priorFiltered, orderedSets)
+            .ToDictionary(
+                static kv => kv.Key,
+                static kv => new
+                {
+                    added = kv.Value.Added,
+                    changed = kv.Value.Changed,
+                    removed = kv.Value.Removed
+                },
+                StringComparer.OrdinalIgnoreCase);
+
+        return Ok(new { sets = result, diffs });
     }
 
     /// <summary>
@@ -126,26 +124,26 @@ public class MediuxController : ControllerBase
             return BadRequest();
         }
 
-        var updates = new Dictionary<SetBindingKind, string>();
-        AddBinding(updates, SetBindingKind.Poster, request.Poster);
-        AddBinding(updates, SetBindingKind.SeasonPosters, request.SeasonPosters);
-        AddBinding(updates, SetBindingKind.SpecialsPoster, request.SpecialsPoster);
-        AddBinding(updates, SetBindingKind.Backdrop, request.Backdrop);
-        AddBinding(updates, SetBindingKind.Titlecards, request.Titlecards);
-        AddBinding(updates, SetBindingKind.AlbumArt, request.AlbumArt);
-        AddBinding(updates, SetBindingKind.Logo, request.Logo);
+        var providerKey = request.ProviderKey.Trim();
+        var updates = new Dictionary<SetBindingKind, ImageTypeBinding>();
+        AddBindingUpdate(updates, SetBindingKind.Poster, request.Poster);
+        AddBindingUpdate(updates, SetBindingKind.SeasonPosters, request.SeasonPosters);
+        AddBindingUpdate(updates, SetBindingKind.SpecialsPoster, request.SpecialsPoster);
+        AddBindingUpdate(updates, SetBindingKind.Backdrop, request.Backdrop);
+        AddBindingUpdate(updates, SetBindingKind.Titlecards, request.Titlecards);
+        AddBindingUpdate(updates, SetBindingKind.AlbumArt, request.AlbumArt);
+        AddBindingUpdate(updates, SetBindingKind.Logo, request.Logo);
 
-        if (updates.Count == 0)
+        if (updates.Count > 0)
         {
-            return NoContent();
+            _bindingStore.MergeManual(providerKey, updates, request.LockSets == true);
         }
 
-        _bindingStore.Merge(request.ProviderKey.Trim(), updates);
         return NoContent();
     }
 
     /// <summary>
-    /// Gets sticky MediUX set bindings for a Jellyfin item (set ids only).
+    /// Gets sticky MediUX set bindings for a Jellyfin item.
     /// </summary>
     [HttpGet("SetBindings")]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -162,31 +160,37 @@ public class MediuxController : ControllerBase
         var providerKey = MediuxSetBindingStore.GetProviderKey(keyItem);
         if (string.IsNullOrWhiteSpace(providerKey))
         {
-            return Ok(new
-            {
-                providerKey = (string?)null,
-                poster = (string?)null,
-                seasonPosters = (string?)null,
-                specialsPoster = (string?)null,
-                backdrop = (string?)null,
-                titlecards = (string?)null,
-                albumArt = (string?)null,
-                logo = (string?)null
-            });
+            return Ok(new { providerKey = (string?)null });
         }
 
         var bindings = _bindingStore.Get(providerKey) ?? new SetBindings();
-        return Ok(new
+        return Ok(new SetBindingsResponseDto
         {
-            providerKey,
-            poster = bindings.Poster,
-            seasonPosters = bindings.SeasonPosters,
-            specialsPoster = bindings.SpecialsPoster,
-            backdrop = bindings.Backdrop,
-            titlecards = bindings.Titlecards,
-            albumArt = bindings.AlbumArt,
-            logo = bindings.Logo
+            ProviderKey = providerKey,
+            Poster = ToBindingDto(bindings.Poster),
+            SeasonPosters = ToBindingDto(bindings.SeasonPosters),
+            SpecialsPoster = ToBindingDto(bindings.SpecialsPoster),
+            Backdrop = ToBindingDto(bindings.Backdrop),
+            Titlecards = ToBindingDto(bindings.Titlecards),
+            AlbumArt = ToBindingDto(bindings.AlbumArt),
+            Logo = ToBindingDto(bindings.Logo)
         });
+    }
+
+    private static ImageTypeBindingDto? ToBindingDto(ImageTypeBinding? binding)
+    {
+        if (binding is null || string.IsNullOrWhiteSpace(binding.Set))
+        {
+            return null;
+        }
+
+        return new ImageTypeBindingDto
+        {
+            Set = binding.Set,
+            Author = binding.Author,
+            Locked = binding.Locked,
+            Missing = binding.Missing is null ? null : [.. binding.Missing]
+        };
     }
 
     /// <summary>
@@ -216,12 +220,109 @@ public class MediuxController : ControllerBase
             _ => item
         };
 
-    private static void AddBinding(IDictionary<SetBindingKind, string> updates, SetBindingKind kind, string? setId)
+    private static void AddBindingUpdate(
+        IDictionary<SetBindingKind, ImageTypeBinding> updates,
+        SetBindingKind kind,
+        ImageTypeBindingDto? dto)
     {
-        if (!string.IsNullOrWhiteSpace(setId))
+        if (dto is null || string.IsNullOrWhiteSpace(dto.Set))
         {
-            updates[kind] = setId.Trim();
+            return;
         }
+
+        updates[kind] = new ImageTypeBinding
+        {
+            Set = dto.Set.Trim(),
+            Author = dto.Author?.Trim(),
+            Locked = dto.Locked,
+            Missing = dto.Missing is null ? null : [.. dto.Missing]
+        };
+    }
+
+    private SetBrowserDto MapSetBrowserDto(MediuxSet s)
+        => new()
+        {
+            SetId = s.Id,
+            SetTitle = s.SetTitle,
+            Username = s.Username,
+            Popularity = s.EffectivePopularity,
+            ImageCount = s.Images.Count,
+            Images = s.Images.Select(img =>
+            {
+                var previewWidth = MediuxPreviewSizes.GetMaxWidth(img.Slot.Kind);
+                return new SetImageDto
+                {
+                    AssetId = img.AssetId,
+                    SlotKind = img.Slot.Kind.ToString(),
+                    SeasonNumber = img.Slot.SeasonNumber,
+                    EpisodeNumber = img.Slot.EpisodeNumber,
+                    Url = _apiClient.BuildAssetUrl(img.AssetId, img.ModifiedOn),
+                    PreviewUrl = _apiClient.BuildPreviewUrl(img.AssetId, img.ModifiedOn, previewWidth),
+                    Version = MediuxApiClient.FormatAssetVersion(img.ModifiedOn),
+                    PreviewWidth = previewWidth,
+                    Language = img.Language
+                };
+            }).ToList()
+        };
+
+    private async Task<(IReadOnlyList<MediuxSet> Sets, IReadOnlyList<MediuxSet>? Prior)> ResolveSetsWithPriorAsync(
+        BaseItem item,
+        bool forceRefresh,
+        CancellationToken cancellationToken)
+    {
+        return item switch
+        {
+            Movie => await FetchMovieSetsWithPriorAsync(item, forceRefresh, cancellationToken).ConfigureAwait(false),
+            Series series => await FetchShowSetsWithPriorAsync(series, forceRefresh, cancellationToken).ConfigureAwait(false),
+            Season season when season.Series is not null
+                => await FetchShowSetsWithPriorAsync(season.Series, forceRefresh, cancellationToken).ConfigureAwait(false),
+            Episode episode when episode.Series is not null
+                => await FetchShowSetsWithPriorAsync(episode.Series, forceRefresh, cancellationToken).ConfigureAwait(false),
+            _ => ([], null)
+        };
+    }
+
+    private async Task<(IReadOnlyList<MediuxSet> Sets, IReadOnlyList<MediuxSet>? Prior)> FetchMovieSetsWithPriorAsync(
+        BaseItem item,
+        bool forceRefresh,
+        CancellationToken cancellationToken)
+    {
+        var tmdbId = item.GetProviderId(MediaBrowser.Model.Entities.MetadataProvider.Tmdb);
+        if (string.IsNullOrEmpty(tmdbId))
+        {
+            return ([], null);
+        }
+
+        return await _apiClient.GetMovieSetsWithPriorAsync(tmdbId, forceRefresh, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<(IReadOnlyList<MediuxSet> Sets, IReadOnlyList<MediuxSet>? Prior)> FetchShowSetsWithPriorAsync(
+        Series series,
+        bool forceRefresh,
+        CancellationToken cancellationToken)
+    {
+        var tmdbId = series.GetProviderId(MediaBrowser.Model.Entities.MetadataProvider.Tmdb);
+        if (string.IsNullOrEmpty(tmdbId))
+        {
+            var tvdbId = series.GetProviderId(MediaBrowser.Model.Entities.MetadataProvider.Tvdb);
+            if (!string.IsNullOrEmpty(tvdbId))
+            {
+                tmdbId = await _apiClient.ResolveShowTmdbIdFromTvdbAsync(tvdbId, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        if (string.IsNullOrEmpty(tmdbId))
+        {
+            return ([], null);
+        }
+
+        return await _apiClient.GetShowSetsWithPriorAsync(tmdbId, forceRefresh, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<IReadOnlyList<MediuxSet>> ResolveSetsAsync(BaseItem item, CancellationToken cancellationToken)
+    {
+        var (sets, _) = await ResolveSetsWithPriorAsync(item, forceRefresh: false, cancellationToken).ConfigureAwait(false);
+        return sets;
     }
 
     /// <summary>
@@ -269,49 +370,6 @@ public class MediuxController : ControllerBase
         }
 
         return File(stream, "application/javascript");
-    }
-
-    private async Task<IReadOnlyList<MediuxSet>> ResolveSetsAsync(BaseItem item, CancellationToken cancellationToken)
-    {
-        return item switch
-        {
-            Movie => await FetchMovieSetsAsync(item, cancellationToken).ConfigureAwait(false),
-            Series series => await FetchShowSetsAsync(series, cancellationToken).ConfigureAwait(false),
-            Season season when season.Series is not null => await FetchShowSetsAsync(season.Series, cancellationToken).ConfigureAwait(false),
-            Episode episode when episode.Series is not null => await FetchShowSetsAsync(episode.Series, cancellationToken).ConfigureAwait(false),
-            _ => []
-        };
-    }
-
-    private async Task<IReadOnlyList<MediuxSet>> FetchMovieSetsAsync(BaseItem item, CancellationToken cancellationToken)
-    {
-        var tmdbId = item.GetProviderId(MediaBrowser.Model.Entities.MetadataProvider.Tmdb);
-        if (string.IsNullOrEmpty(tmdbId))
-        {
-            return [];
-        }
-
-        return await _apiClient.GetMovieSetsAsync(tmdbId, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task<IReadOnlyList<MediuxSet>> FetchShowSetsAsync(Series series, CancellationToken cancellationToken)
-    {
-        var tmdbId = series.GetProviderId(MediaBrowser.Model.Entities.MetadataProvider.Tmdb);
-        if (string.IsNullOrEmpty(tmdbId))
-        {
-            var tvdbId = series.GetProviderId(MediaBrowser.Model.Entities.MetadataProvider.Tvdb);
-            if (!string.IsNullOrEmpty(tvdbId))
-            {
-                tmdbId = await _apiClient.ResolveShowTmdbIdFromTvdbAsync(tvdbId, cancellationToken).ConfigureAwait(false);
-            }
-        }
-
-        if (string.IsNullOrEmpty(tmdbId))
-        {
-            return [];
-        }
-
-        return await _apiClient.GetShowSetsAsync(tmdbId, cancellationToken).ConfigureAwait(false);
     }
 }
 
@@ -388,6 +446,44 @@ public class SetImageDto
 }
 
 /// <summary>
+/// Sticky set-binding response for the Browse By UI.
+/// </summary>
+public class SetBindingsResponseDto
+{
+    /// <summary>Gets or sets the provider key (tmdb:… / tvdb:…).</summary>
+    [JsonPropertyName("providerKey")]
+    public string? ProviderKey { get; set; }
+
+    /// <summary>Gets or sets the poster binding.</summary>
+    [JsonPropertyName("poster")]
+    public ImageTypeBindingDto? Poster { get; set; }
+
+    /// <summary>Gets or sets the season posters binding.</summary>
+    [JsonPropertyName("seasonPosters")]
+    public ImageTypeBindingDto? SeasonPosters { get; set; }
+
+    /// <summary>Gets or sets the specials poster binding.</summary>
+    [JsonPropertyName("specialsPoster")]
+    public ImageTypeBindingDto? SpecialsPoster { get; set; }
+
+    /// <summary>Gets or sets the backdrop binding.</summary>
+    [JsonPropertyName("backdrop")]
+    public ImageTypeBindingDto? Backdrop { get; set; }
+
+    /// <summary>Gets or sets the titlecards binding.</summary>
+    [JsonPropertyName("titlecards")]
+    public ImageTypeBindingDto? Titlecards { get; set; }
+
+    /// <summary>Gets or sets the album art binding.</summary>
+    [JsonPropertyName("albumArt")]
+    public ImageTypeBindingDto? AlbumArt { get; set; }
+
+    /// <summary>Gets or sets the logo binding.</summary>
+    [JsonPropertyName("logo")]
+    public ImageTypeBindingDto? Logo { get; set; }
+}
+
+/// <summary>
 /// Partial sticky set-binding update payload.
 /// </summary>
 public class SetBindingsUpdateDto
@@ -396,31 +492,57 @@ public class SetBindingsUpdateDto
     [JsonPropertyName("providerKey")]
     public string ProviderKey { get; set; } = string.Empty;
 
-    /// <summary>Gets or sets the poster set id.</summary>
+    /// <summary>Gets or sets whether included kinds should be locked.</summary>
+    [JsonPropertyName("lockSets")]
+    public bool? LockSets { get; set; }
+
+    /// <summary>Gets or sets the poster binding.</summary>
     [JsonPropertyName("poster")]
-    public string? Poster { get; set; }
+    public ImageTypeBindingDto? Poster { get; set; }
 
-    /// <summary>Gets or sets the season posters set id.</summary>
+    /// <summary>Gets or sets the season posters binding.</summary>
     [JsonPropertyName("seasonPosters")]
-    public string? SeasonPosters { get; set; }
+    public ImageTypeBindingDto? SeasonPosters { get; set; }
 
-    /// <summary>Gets or sets the specials poster set id.</summary>
+    /// <summary>Gets or sets the specials poster binding.</summary>
     [JsonPropertyName("specialsPoster")]
-    public string? SpecialsPoster { get; set; }
+    public ImageTypeBindingDto? SpecialsPoster { get; set; }
 
-    /// <summary>Gets or sets the backdrop set id.</summary>
+    /// <summary>Gets or sets the backdrop binding.</summary>
     [JsonPropertyName("backdrop")]
-    public string? Backdrop { get; set; }
+    public ImageTypeBindingDto? Backdrop { get; set; }
 
-    /// <summary>Gets or sets the titlecards set id.</summary>
+    /// <summary>Gets or sets the titlecards binding.</summary>
     [JsonPropertyName("titlecards")]
-    public string? Titlecards { get; set; }
+    public ImageTypeBindingDto? Titlecards { get; set; }
 
-    /// <summary>Gets or sets the album art set id.</summary>
+    /// <summary>Gets or sets the album art binding.</summary>
     [JsonPropertyName("albumArt")]
-    public string? AlbumArt { get; set; }
+    public ImageTypeBindingDto? AlbumArt { get; set; }
 
-    /// <summary>Gets or sets the logo set id.</summary>
+    /// <summary>Gets or sets the logo binding.</summary>
     [JsonPropertyName("logo")]
-    public string? Logo { get; set; }
+    public ImageTypeBindingDto? Logo { get; set; }
+}
+
+/// <summary>
+/// DTO for a per-type binding update.
+/// </summary>
+public class ImageTypeBindingDto
+{
+    /// <summary>Gets or sets the set id.</summary>
+    [JsonPropertyName("set")]
+    public string? Set { get; set; }
+
+    /// <summary>Gets or sets the author username.</summary>
+    [JsonPropertyName("author")]
+    public string? Author { get; set; }
+
+    /// <summary>Gets or sets whether the binding is locked.</summary>
+    [JsonPropertyName("locked")]
+    public bool Locked { get; set; }
+
+    /// <summary>Gets or sets missing season/episode keys.</summary>
+    [JsonPropertyName("missing")]
+    public List<string>? Missing { get; set; }
 }

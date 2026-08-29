@@ -28,35 +28,67 @@ public enum SetBindingKind
 }
 
 /// <summary>
-/// Sticky MediUX set ids for a single provider key.
+/// Per-image-type wanted MediUX set binding.
+/// </summary>
+public sealed class ImageTypeBinding
+{
+    /// <summary>Gets or sets the MediUX set id.</summary>
+    public string? Set { get; set; }
+
+    /// <summary>Gets or sets the set author username.</summary>
+    public string? Author { get; set; }
+
+    /// <summary>Gets or sets whether automatic rebinding/upgrades are blocked.</summary>
+    public bool Locked { get; set; }
+
+    /// <summary>
+    /// Gets or sets season/episode keys still missing from the wanted set (S2 / S4E5).
+    /// </summary>
+    public List<string>? Missing { get; set; }
+
+    /// <summary>
+    /// Creates a shallow copy.
+    /// </summary>
+    public ImageTypeBinding Clone()
+        => new()
+        {
+            Set = Set,
+            Author = Author,
+            Locked = Locked,
+            Missing = Missing is null ? null : [.. Missing]
+        };
+}
+
+/// <summary>
+/// Sticky MediUX set bindings for a single provider key.
 /// </summary>
 public sealed class SetBindings
 {
-    /// <summary>Gets or sets the poster set id.</summary>
-    public string? Poster { get; set; }
+    /// <summary>Gets or sets the poster binding.</summary>
+    public ImageTypeBinding? Poster { get; set; }
 
-    /// <summary>Gets or sets the season posters set id.</summary>
-    public string? SeasonPosters { get; set; }
+    /// <summary>Gets or sets the season posters binding.</summary>
+    public ImageTypeBinding? SeasonPosters { get; set; }
 
-    /// <summary>Gets or sets the specials poster set id.</summary>
-    public string? SpecialsPoster { get; set; }
+    /// <summary>Gets or sets the specials poster binding.</summary>
+    public ImageTypeBinding? SpecialsPoster { get; set; }
 
-    /// <summary>Gets or sets the backdrop set id.</summary>
-    public string? Backdrop { get; set; }
+    /// <summary>Gets or sets the backdrop binding.</summary>
+    public ImageTypeBinding? Backdrop { get; set; }
 
-    /// <summary>Gets or sets the titlecards set id.</summary>
-    public string? Titlecards { get; set; }
+    /// <summary>Gets or sets the titlecards binding.</summary>
+    public ImageTypeBinding? Titlecards { get; set; }
 
-    /// <summary>Gets or sets the album art set id.</summary>
-    public string? AlbumArt { get; set; }
+    /// <summary>Gets or sets the album art binding.</summary>
+    public ImageTypeBinding? AlbumArt { get; set; }
 
-    /// <summary>Gets or sets the logo set id.</summary>
-    public string? Logo { get; set; }
+    /// <summary>Gets or sets the logo binding.</summary>
+    public ImageTypeBinding? Logo { get; set; }
 
     /// <summary>
-    /// Gets the set id for a binding kind.
+    /// Gets the binding for a kind.
     /// </summary>
-    public string? Get(SetBindingKind kind)
+    public ImageTypeBinding? Get(SetBindingKind kind)
         => kind switch
         {
             SetBindingKind.Poster => Poster,
@@ -70,46 +102,47 @@ public sealed class SetBindings
         };
 
     /// <summary>
-    /// Sets the set id for a binding kind.
+    /// Sets the binding for a kind.
     /// </summary>
-    public void Set(SetBindingKind kind, string? setId)
+    public void Set(SetBindingKind kind, ImageTypeBinding? binding)
     {
         switch (kind)
         {
             case SetBindingKind.Poster:
-                Poster = setId;
+                Poster = binding;
                 break;
             case SetBindingKind.SeasonPosters:
-                SeasonPosters = setId;
+                SeasonPosters = binding;
                 break;
             case SetBindingKind.SpecialsPoster:
-                SpecialsPoster = setId;
+                SpecialsPoster = binding;
                 break;
             case SetBindingKind.Backdrop:
-                Backdrop = setId;
+                Backdrop = binding;
                 break;
             case SetBindingKind.Titlecards:
-                Titlecards = setId;
+                Titlecards = binding;
                 break;
             case SetBindingKind.AlbumArt:
-                AlbumArt = setId;
+                AlbumArt = binding;
                 break;
             case SetBindingKind.Logo:
-                Logo = setId;
+                Logo = binding;
                 break;
         }
     }
 
     /// <summary>
-    /// Merges partial updates into this binding record.
+    /// Enumerates all kinds that currently have a set id.
     /// </summary>
-    public void ApplyUpdates(IReadOnlyDictionary<SetBindingKind, string> updates)
+    public IEnumerable<(SetBindingKind Kind, ImageTypeBinding Binding)> EnumerateBound()
     {
-        foreach (var (kind, setId) in updates)
+        foreach (SetBindingKind kind in Enum.GetValues<SetBindingKind>())
         {
-            if (!string.IsNullOrWhiteSpace(setId))
+            var binding = Get(kind);
+            if (binding is not null && !string.IsNullOrWhiteSpace(binding.Set))
             {
-                Set(kind, setId);
+                yield return (kind, binding);
             }
         }
     }

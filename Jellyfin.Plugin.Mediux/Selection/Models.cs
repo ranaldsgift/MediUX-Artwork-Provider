@@ -141,8 +141,8 @@ public sealed class SelectionResult
     public IReadOnlyList<SelectedImage> Alternatives { get; init; } = [];
 
     /// <summary>
-    /// Gets sticky binding updates discovered during selection (category → set id).
+    /// Gets sticky binding updates discovered during selection (wanted set per category).
     /// </summary>
-    public IReadOnlyDictionary<SetBindingKind, string> BindingUpdates { get; init; }
-        = new Dictionary<SetBindingKind, string>();
+    public IReadOnlyDictionary<SetBindingKind, ImageTypeBinding> BindingUpdates { get; init; }
+        = new Dictionary<SetBindingKind, ImageTypeBinding>();
 }

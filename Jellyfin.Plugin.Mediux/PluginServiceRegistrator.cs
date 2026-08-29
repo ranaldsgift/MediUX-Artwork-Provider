@@ -3,6 +3,7 @@ using Jellyfin.Plugin.Mediux.Services;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Model.Tasks;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Jellyfin.Plugin.Mediux;
@@ -28,6 +29,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<MediuxSetBindingStore>();
         serviceCollection.AddSingleton<MediuxArtworkService>();
         serviceCollection.AddSingleton<MediuxPreviewService>();
-        serviceCollection.AddSingleton<IScheduledTask, FileTransformationStartupService>();
+        serviceCollection.AddSingleton<IStartupFilter, ScriptInjectionStartupFilter>();
+        serviceCollection.AddSingleton<IScheduledTask, UpdateUndesiredImagesTask>();
     }
 }
