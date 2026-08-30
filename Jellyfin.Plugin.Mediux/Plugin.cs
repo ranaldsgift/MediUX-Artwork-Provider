@@ -36,7 +36,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     }
 
     /// <inheritdoc />
-    public override string Name => "MediUX";
+    public override string Name => "MediUX Artwork Provider by HighImKevin";
 
     /// <inheritdoc />
     public override string Description =>
