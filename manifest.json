@@ -9,19 +9,19 @@
     "versions":  [
                      {
                          "version":  "1.0.1.1",
-                         "changelog":  "Jellyfin 10.11+ build.",
+                         "changelog":  "Jellyfin 10.11+ build. Release 1.0.1.",
                          "targetAbi":  "10.11.0.0",
                          "sourceUrl":  "https://github.com/ranaldsgift/MediUX-Artwork-Provider/releases/download/v1.0.1/Jellyfin.Plugin.Mediux_10.11.zip",
-                         "checksum":  "3D38ED126A7D44E839E075931942DCCD",
-                         "timestamp":  "2026-08-29T08:46:12Z"
+                         "checksum":  "7A9440A55AA5CB935ADE142B23552DEA",
+                         "timestamp":  "2026-08-30T00:25:55Z"
                      },
                      {
                          "version":  "1.0.1.0",
-                         "changelog":  "Jellyfin 10.10.7 build.",
+                         "changelog":  "Jellyfin 10.10.7 build. Release 1.0.1.",
                          "targetAbi":  "10.10.7.0",
                          "sourceUrl":  "https://github.com/ranaldsgift/MediUX-Artwork-Provider/releases/download/v1.0.1/Jellyfin.Plugin.Mediux_10.10.7.zip",
-                         "checksum":  "DBB4427F919051AB56B7054EA3983711",
-                         "timestamp":  "2026-08-29T08:46:12Z"
+                         "checksum":  "C4B55D3E4CF00B9DC79AC5BCB2954709",
+                         "timestamp":  "2026-08-30T00:25:55Z"
                      },
                      {
                          "version":  "1.0.0.1",
