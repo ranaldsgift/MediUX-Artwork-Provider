@@ -65,6 +65,8 @@ For local development or offline install:
 dotnet build Jellyfin.Plugin.Mediux/Jellyfin.Plugin.Mediux.csproj -c Release
 ```
 
+The Release build also writes each `dist/*/meta.json` from the version and metadata properties in the csproj, so bump `<PluginVersion>` there before building a release; the DLL and meta.json in `dist/` (and any zip made from them) then carry the same version.
+
 | Jellyfin | Framework | Output |
 |----------|-----------|--------|
 | 10.10.7 | net8.0 | `dist/10.10.7/` |
