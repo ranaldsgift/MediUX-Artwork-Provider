@@ -9,6 +9,34 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     <LangVersion>latest</LangVersion>
+
+    <!-- The one number to bump per release (or override with -p:PluginVersion=x.y.z; never pass
+         -p:Version, which would stamp both builds identically). The fourth version component
+         identifies the Jellyfin line (.0 = 10.10.7 / net8.0, .1 = 10.11+ / net9.0) so that each
+         build has a distinct version in the catalog AND that same version stamped into the
+         assembly. The dashboard sends the assembly version to the enable/disable/uninstall
+         endpoints and the server matches it against meta.json; if they differ, those buttons 404. -->
+    <PluginVersion>1.0.1</PluginVersion>
+    <PluginGuid>c8e4f2a1-9b3d-4e6f-a1c2-7d8e9f0a1b2c</PluginGuid>
+    <!-- Keep these identical to manifest.json. Jellyfin copies a zip's meta.json values over the
+         catalog's on install, and on 10.10.7 the update task only matches a plugin whose on-disk
+         name equals the catalog name. Plain single-line text: no double quotes, backslashes or line breaks. -->
+    <PluginName>MediUX Artwork Provider by HighImKevin</PluginName>
+    <PluginOwner>ranaldsgift</PluginOwner>
+    <PluginDescription>Artwork provider for MediUX fanart sets.</PluginDescription>
+    <PluginOverview>An unofficial MediUX Artwork Provider which downloads high quality fanart image sets from MediUX. Automatically picks sets from your preferred authors and excludes sets from your excluded authors. If no author matches are found, the plugin will pick the most complete set from the available options.</PluginOverview>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <Version>$(PluginVersion).0</Version>
+    <PluginTargetAbi>10.10.7.0</PluginTargetAbi>
+    <PluginChangelog>Jellyfin 10.10.7 (net8.0) build.</PluginChangelog>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net9.0'">
+    <Version>$(PluginVersion).1</Version>
+    <PluginTargetAbi>10.11.0.0</PluginTargetAbi>
+    <PluginChangelog>Jellyfin 10.11 and 12 (net9.0) build.</PluginChangelog>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
@@ -36,17 +64,33 @@
     <EmbeddedResource Include="Web\setbrowser.js" />
   </ItemGroup>
 
-  <!-- Package install folders under dist/ after Release builds -->
-  <Target Name="PackageDist" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+  <!-- Package install folders under dist/ after Release builds. meta.json is generated from the
+       properties above, so the version the catalog sees is always the version in the assembly.
+       Skipped on the outer pass of the multi-target build, which has no TargetFramework. -->
+  <Target Name="PackageDist" AfterTargets="Build" Condition="'$(Configuration)' == 'Release' And '$(TargetFramework)' != ''">
     <PropertyGroup>
       <_DistDir Condition="'$(TargetFramework)' == 'net8.0'">$(MSBuildThisFileDirectory)..\dist\10.10.7\</_DistDir>
       <_DistDir Condition="'$(TargetFramework)' == 'net9.0'">$(MSBuildThisFileDirectory)..\dist\10.11\</_DistDir>
-      <_MetaSource Condition="'$(TargetFramework)' == 'net8.0'">$(MSBuildThisFileDirectory)..\meta.10.10.7.json</_MetaSource>
-      <_MetaSource Condition="'$(TargetFramework)' == 'net9.0'">$(MSBuildThisFileDirectory)..\meta.10.11.json</_MetaSource>
+      <_MetaText>$(PluginName)$(PluginOwner)$(PluginDescription)$(PluginOverview)$(PluginChangelog)</_MetaText>
+      <_MetaJson>{
+    "category": "Metadata",
+    "guid": "$(PluginGuid)",
+    "name": "$(PluginName)",
+    "description": "$(PluginDescription)",
+    "owner": "$(PluginOwner)",
+    "overview": "$(PluginOverview)",
+    "version": "$(Version)",
+    "targetAbi": "$(PluginTargetAbi)",
+    "framework": "$(TargetFramework)",
+    "changelog": "$(PluginChangelog)"
+}</_MetaJson>
     </PropertyGroup>
+    <Error Condition="'$(_DistDir)' == ''" Text="PackageDist: no dist folder is mapped for TargetFramework '$(TargetFramework)'" />
+    <Error Condition="$(_MetaText.Contains('&quot;')) Or $(_MetaText.Contains('\')) Or $(_MetaText.Contains('%0A')) Or $(_MetaText.Contains('%0D'))" Text="PackageDist: Plugin* text properties must not contain double quotes, backslashes or line breaks (they are written into meta.json unescaped)" />
     <MakeDir Directories="$(_DistDir)" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(_DistDir)" />
-    <Copy SourceFiles="$(_MetaSource)" DestinationFiles="$(_DistDir)meta.json" />
+    <!-- Escape so that a ';' in any value is written literally instead of splitting the text into lines. -->
+    <WriteLinesToFile File="$(_DistDir)meta.json" Lines="$([MSBuild]::Escape($(_MetaJson)))" Overwrite="true" />
   </Target>
 
 </Project>
